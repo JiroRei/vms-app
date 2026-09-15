@@ -21,6 +21,15 @@ enum VisitorType {
   DELIVERY
 }
 
+/// Where a visit sits in its lifecycle. PENDING_RETURN is the middle state: the
+/// visitor has stepped out but is expected back the same day, so the visit is
+/// still open (`checkOutTime` stays null) and resumes rather than restarting.
+enum VisitStatus {
+  ACTIVE
+  CHECKED_OUT
+  PENDING_RETURN
+}
+
 // ---------------------------------------------------------------------------
 // Application models
 // ---------------------------------------------------------------------------
@@ -91,10 +100,20 @@ model Visit {
   checkInTime  DateTime  @default(now())
   checkOutTime DateTime?
 
+  /// Defaults to ACTIVE so rows created before this column existed — and every
+  /// new visit — read the same way the old `checkOutTime IS NULL` check did.
+  status VisitStatus @default(ACTIVE)
+
+  /// When the visitor stepped out expecting to come back today. Distinct from
+  /// `checkOutTime`: an exit is reversible and leaves the visit open, whereas a
+  /// check-out ends it. Cleared again when they are marked as returned.
+  exitTime DateTime?
+
   createdAt DateTime @default(now())
 
   @@index([visitorId])
   @@index([checkOutTime])
+  @@index([status])
   @@map("visit")
 }
 
