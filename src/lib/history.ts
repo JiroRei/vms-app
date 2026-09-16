@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { Prisma } from "@/generated/prisma/client";
-import type { VisitorType } from "@/generated/prisma/enums";
+import type { VisitStatus, VisitorType } from "@/generated/prisma/enums";
 import { startOfLocalDay, toLocalDateKey } from "@/lib/dates";
 import { prisma } from "@/lib/prisma";
 
@@ -17,6 +17,13 @@ export type HistoryVisit = {
   hostDepartment: string | null;
   checkInTime: string;
   checkOutTime: string | null;
+  /**
+   * The status the visit ended up in. A visit that stepped out and came back is
+   * a plain CHECKED_OUT record here — the PENDING_RETURN it passed through left
+   * no trace, because it was the same row throughout. Only a visit still in
+   * that state right now reports PENDING_RETURN.
+   */
+  status: VisitStatus;
 };
 
 export type HistoryFilters = {
@@ -120,6 +127,7 @@ export async function getVisitHistory(
       hostDepartment: visit.visitor.host?.department ?? null,
       checkInTime: visit.checkInTime.toISOString(),
       checkOutTime: visit.checkOutTime?.toISOString() ?? null,
+      status: visit.status,
     })),
   };
 }

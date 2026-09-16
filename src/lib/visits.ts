@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { VisitorType } from "@/generated/prisma/enums";
+import type { VisitStatus, VisitorType } from "@/generated/prisma/enums";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -16,6 +16,10 @@ export type ActiveVisit = {
   /** Null for a delivery logged without a named recipient. */
   hostName: string | null;
   hostDepartment: string | null;
+  /** Never CHECKED_OUT here — those are filtered out of the live list. */
+  status: VisitStatus;
+  /** Set only while PENDING_RETURN: when the visitor stepped out. */
+  exitTime: string | null;
 };
 
 export type HostOption = {
@@ -31,10 +35,17 @@ export async function getHosts(): Promise<HostOption[]> {
   });
 }
 
-/** Visits that have been checked in but not yet checked out. */
+/**
+ * Visits still open on the floor: someone ACTIVE inside the building, plus
+ * anyone PENDING_RETURN who has stepped out but is expected back today.
+ *
+ * Filtering on `status` rather than `checkOutTime: null` is what keeps the two
+ * apart — both carry a null `checkOutTime`, so only the status distinguishes
+ * "here" from "out, coming back".
+ */
 export async function getActiveVisits(): Promise<ActiveVisit[]> {
   const visits = await prisma.visit.findMany({
-    where: { checkOutTime: null },
+    where: { status: { in: ["ACTIVE", "PENDING_RETURN"] } },
     orderBy: { checkInTime: "desc" },
     include: { visitor: { include: { host: true } } },
   });
@@ -47,6 +58,8 @@ export async function getActiveVisits(): Promise<ActiveVisit[]> {
     purpose: visit.visitor.purpose,
     hostName: visit.visitor.host?.name ?? null,
     hostDepartment: visit.visitor.host?.department ?? null,
+    status: visit.status,
+    exitTime: visit.exitTime?.toISOString() ?? null,
   }));
 }
 
@@ -98,10 +111,32 @@ export async function createDeliveryVisit(input: {
   return { visitorId: visitor.id, visitId: visitor.visits[0].id };
 }
 
+/**
+ * Looks up why an `updateMany` guard matched zero rows.
+ *
+ * Every transition below states its precondition in the WHERE clause, so a
+ * zero-row result is ambiguous on its own: the visit may not exist, or it may
+ * exist in a status the transition does not apply to. One extra read turns that
+ * into a specific answer for the caller.
+ */
+async function readStatus(visitId: string): Promise<VisitStatus | null> {
+  const visit = await prisma.visit.findUnique({
+    where: { id: visitId },
+    select: { status: true },
+  });
+
+  return visit?.status ?? null;
+}
+
 export type CheckOutResult = "checked-out" | "already-checked-out" | "not-found";
 
 /**
- * Stamps `checkOutTime` on an active visit.
+ * Ends a visit for good: stamps `checkOutTime` and moves it to CHECKED_OUT.
+ *
+ * Applies to an ACTIVE visit and to a PENDING_RETURN one alike — a visitor who
+ * stepped out and then turns out not to be coming back is checked out from
+ * where they stand, without being marked as returned first. `exitTime` is left
+ * as it is: it is a record of when they actually left the building.
  *
  * The `checkOutTime: null` guard is part of the WHERE clause so two concurrent
  * clicks can't both win — the second matches zero rows and reports
@@ -114,17 +149,84 @@ export async function checkOutVisit(
 
   const { count } = await prisma.visit.updateMany({
     where: { id: visitId, checkOutTime: null },
-    data: { checkOutTime },
+    data: { checkOutTime, status: "CHECKED_OUT" },
   });
 
   if (count > 0) {
     return { result: "checked-out", checkOutTime: checkOutTime.toISOString() };
   }
 
-  const exists = await prisma.visit.findUnique({
-    where: { id: visitId },
-    select: { id: true },
+  return {
+    result: (await readStatus(visitId)) ? "already-checked-out" : "not-found",
+  };
+}
+
+export type StepOutResult =
+  | "stepped-out"
+  | "already-stepped-out"
+  | "already-checked-out"
+  | "not-found";
+
+/**
+ * Marks an ACTIVE visit as stepped out but expected back today.
+ *
+ * `checkOutTime` deliberately stays null: the visit is not over, so it keeps
+ * its place in the live list and its original `checkInTime`. Only `exitTime`
+ * moves, which is what makes the step-out reversible.
+ */
+export async function markVisitReturning(
+  visitId: string,
+): Promise<{ result: StepOutResult; exitTime?: string }> {
+  const exitTime = new Date();
+
+  const { count } = await prisma.visit.updateMany({
+    // `status: "ACTIVE"` is the guard: a visit already stepped out or already
+    // checked out must not have its `exitTime` overwritten by a second click.
+    where: { id: visitId, status: "ACTIVE" },
+    data: { status: "PENDING_RETURN", exitTime },
   });
 
-  return { result: exists ? "already-checked-out" : "not-found" };
+  if (count > 0) {
+    return { result: "stepped-out", exitTime: exitTime.toISOString() };
+  }
+
+  const status = await readStatus(visitId);
+
+  if (status === "PENDING_RETURN") return { result: "already-stepped-out" };
+  if (status === "CHECKED_OUT") return { result: "already-checked-out" };
+
+  return { result: "not-found" };
+}
+
+export type ReturnResult =
+  | "returned"
+  | "already-active"
+  | "already-checked-out"
+  | "not-found";
+
+/**
+ * Resumes a PENDING_RETURN visit: back to ACTIVE with `exitTime` cleared.
+ *
+ * This updates the same Visit row rather than opening a new one, so the day
+ * reads as a single visit with one `checkInTime` and, eventually, one
+ * `checkOutTime` — the step-out leaves no trace in history once it is over.
+ */
+export async function markVisitReturned(
+  visitId: string,
+): Promise<{ result: ReturnResult }> {
+  const { count } = await prisma.visit.updateMany({
+    where: { id: visitId, status: "PENDING_RETURN" },
+    data: { status: "ACTIVE", exitTime: null },
+  });
+
+  if (count > 0) {
+    return { result: "returned" };
+  }
+
+  const status = await readStatus(visitId);
+
+  if (status === "ACTIVE") return { result: "already-active" };
+  if (status === "CHECKED_OUT") return { result: "already-checked-out" };
+
+  return { result: "not-found" };
 }

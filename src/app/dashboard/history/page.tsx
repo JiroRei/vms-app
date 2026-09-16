@@ -30,22 +30,41 @@ function formatDateTime(iso: string): string {
   });
 }
 
+/**
+ * The check-out column: a timestamp for a finished visit, a badge for one that
+ * is still open.
+ *
+ * Driven by `status` rather than by `checkOutTime` being null, because two
+ * different open states now share a null check-out — someone still inside, and
+ * someone who stepped out and is expected back. A visit that passed through
+ * PENDING_RETURN and came back reads here as an ordinary completed visit: it is
+ * the same row, so it carries its original check-in and its final check-out.
+ */
 function StatusCell({ visit }: { visit: HistoryVisit }) {
-  if (!visit.checkOutTime) {
+  if (visit.checkOutTime) {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700 dark:bg-green-500/10 dark:text-green-400">
-        <span className="h-1.5 w-1.5 rounded-full bg-green-500" aria-hidden />
-        Still inside
+      <span
+        className="tabular-nums text-gray-600 dark:text-gray-300"
+        suppressHydrationWarning
+      >
+        {formatDateTime(visit.checkOutTime)}
+      </span>
+    );
+  }
+
+  if (visit.status === "PENDING_RETURN") {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">
+        <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden />
+        Out — Returning
       </span>
     );
   }
 
   return (
-    <span
-      className="tabular-nums text-gray-600 dark:text-gray-300"
-      suppressHydrationWarning
-    >
-      {formatDateTime(visit.checkOutTime)}
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700 dark:bg-green-500/10 dark:text-green-400">
+      <span className="h-1.5 w-1.5 rounded-full bg-green-500" aria-hidden />
+      Still inside
     </span>
   );
 }
