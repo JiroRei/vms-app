@@ -51,15 +51,27 @@ const appointments = [
   },
 ];
 
-// TEMP: dev-only auth — this plaintext password is compared directly in
+// TEMP: dev-only auth — these plaintext passwords are compared directly in
 // `src/lib/dev-auth.ts`. Once Better Auth is switched on, seed users through
 // `auth.api.signUpEmail(...)` instead so the credential is hashed on `Account`.
-const adminUser = {
-  email: "admin@geoplan.ph",
-  name: "VMS Administrator",
-  role: "ADMIN" as const,
-  password: "admin123",
-};
+//
+// One of each role, so role-gated behaviour can be checked both ways without
+// hand-editing the database: the admin sees "Close all stale visits", the guard
+// does not, and `POST /api/visits/close-stale` rejects the guard with 403.
+const users = [
+  {
+    email: "admin@geoplan.ph",
+    name: "VMS Administrator",
+    role: "ADMIN" as const,
+    password: "admin123",
+  },
+  {
+    email: "guard@geoplan.ph",
+    name: "Front Desk Guard",
+    role: "GUARD" as const,
+    password: "guard123",
+  },
+];
 
 async function main() {
   for (const host of hosts) {
@@ -91,11 +103,13 @@ async function main() {
     });
   }
 
-  await prisma.user.upsert({
-    where: { email: adminUser.email },
-    update: adminUser,
-    create: adminUser,
-  });
+  for (const user of users) {
+    await prisma.user.upsert({
+      where: { email: user.email },
+      update: user,
+      create: user,
+    });
+  }
 
   console.log(`Seeded ${hosts.length} hosts.`);
   console.log(
@@ -103,9 +117,10 @@ async function main() {
       .map((a) => a.referenceNumber)
       .join(", ")}; APT-1004 is pre-used).`,
   );
-  console.log(
-    `Seeded admin user: ${adminUser.email} / ${adminUser.password} (TEMP dev-only credentials)`,
-  );
+  console.log("Seeded users (TEMP dev-only plaintext credentials):");
+  for (const user of users) {
+    console.log(`  ${user.role.padEnd(5)} ${user.email} / ${user.password}`);
+  }
 }
 
 main()

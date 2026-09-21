@@ -1,26 +1,50 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
+import {
+  codeInputClass,
+  formErrorClass,
+  labelClass,
+  primaryButtonClass,
+  secondaryButtonClass,
+} from "@/app/kiosk/form-styles";
 import type { AppointmentDetails } from "@/lib/appointments";
-
-const inputClass =
-  "block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
-const errorInputClass =
-  "block w-full rounded-lg border border-red-400 px-3 py-2 text-sm shadow-sm placeholder:text-gray-400 focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500";
-const primaryButtonClass =
-  "w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 transition-colors disabled:cursor-not-allowed disabled:bg-blue-300";
-const secondaryButtonClass =
-  "w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 transition-colors disabled:cursor-not-allowed disabled:opacity-50";
 
 type Stage = "entry" | "confirm" | "done";
 
+/**
+ * `offerWalkIn` separates "this reference will never work" from "the request
+ * didn't get through". Only the first is a reason to send the visitor to the
+ * walk-in form — offering it after a network blip would throw away a perfectly
+ * good appointment.
+ */
+type LookupError = { message: string; offerWalkIn: boolean };
+
+/** Long enough for any seeded reference, short enough to stop pasted junk. */
+const MAX_REFERENCE_LENGTH = 32;
+
+const NETWORK_ERROR: LookupError = {
+  message:
+    "Could not reach the check-in system. Please try again, or ask reception for help.",
+  offerWalkIn: false,
+};
+
+/** A 404/409 means the reference is unusable, not that the request failed. */
+function isUnusableReference(status: number): boolean {
+  return status === 404 || status === 409;
+}
+
 export function AppointmentForm() {
+  const referenceInput = useRef<HTMLInputElement>(null);
+
   const [stage, setStage] = useState<Stage>("entry");
   const [reference, setReference] = useState("");
-  const [appointment, setAppointment] = useState<AppointmentDetails | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [appointment, setAppointment] = useState<AppointmentDetails | null>(
+    null,
+  );
+  const [error, setError] = useState<LookupError | null>(null);
   const [busy, setBusy] = useState(false);
 
   function reset() {
@@ -30,13 +54,28 @@ export function AppointmentForm() {
     setError(null);
   }
 
+  /** Sends them back to the start with the reason still on screen. */
+  function failBackToEntry(failure: LookupError) {
+    setError(failure);
+    setStage("entry");
+    setAppointment(null);
+  }
+
   async function handleLookup(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    // Disabled while busy, but a double-tap can land both presses before React
+    // has re-rendered the button.
+    if (busy) return;
 
     const trimmed = reference.trim();
 
     if (!trimmed) {
-      setError("Please enter your reference number.");
+      setError({
+        message: "Please enter your reference number.",
+        offerWalkIn: false,
+      });
+      referenceInput.current?.focus();
       return;
     }
 
@@ -52,21 +91,26 @@ export function AppointmentForm() {
       const data = await response.json().catch(() => null);
 
       if (!response.ok) {
-        setError(data?.error ?? "Reference number not found or already used.");
+        setError({
+          message:
+            data?.error ?? "Reference number not found or already used.",
+          offerWalkIn: isUnusableReference(response.status),
+        });
+        referenceInput.current?.focus();
         return;
       }
 
       setAppointment(data.appointment as AppointmentDetails);
       setStage("confirm");
     } catch {
-      setError("Network problem — please try again.");
+      setError(NETWORK_ERROR);
     } finally {
       setBusy(false);
     }
   }
 
   async function handleConfirm() {
-    if (!appointment) return;
+    if (busy || !appointment) return;
 
     setBusy(true);
     setError(null);
@@ -82,15 +126,18 @@ export function AppointmentForm() {
       if (!response.ok) {
         // Someone redeemed it between lookup and confirm — send them back to
         // the start rather than leaving a dead confirm button on screen.
-        setError(data?.error ?? "Could not complete check-in.");
-        setStage("entry");
-        setAppointment(null);
+        failBackToEntry({
+          message: data?.error ?? "Could not complete check-in.",
+          offerWalkIn: isUnusableReference(response.status),
+        });
         return;
       }
 
       setStage("done");
     } catch {
-      setError("Network problem — please try again.");
+      // The appointment may well still be valid, so keep them on the confirm
+      // screen where one more tap retries it.
+      setError(NETWORK_ERROR);
     } finally {
       setBusy(false);
     }
@@ -103,10 +150,10 @@ export function AppointmentForm() {
           <span className="text-5xl" role="img" aria-label="Checked in">
             ✅
           </span>
-          <h1 className="text-2xl font-bold tracking-tight text-gray-900">
+          <h1 className="text-2xl font-bold tracking-tight text-gray-900 sm:text-3xl">
             You&apos;re checked in!
           </h1>
-          <p className="text-sm text-gray-500">
+          <p className="text-base text-gray-500">
             Welcome, {appointment.visitorName}. Please take a seat —{" "}
             {appointment.hostName} has been notified.
           </p>
@@ -123,10 +170,10 @@ export function AppointmentForm() {
     return (
       <div className="space-y-6">
         <div className="text-center">
-          <h1 className="text-2xl font-bold tracking-tight text-gray-900">
+          <h1 className="text-2xl font-bold tracking-tight text-gray-900 sm:text-3xl">
             Is this you?
           </h1>
-          <p className="mt-2 text-sm text-gray-500">
+          <p className="mt-2 text-base text-gray-500">
             Please confirm your details to finish checking in
           </p>
         </div>
@@ -134,13 +181,13 @@ export function AppointmentForm() {
         <dl className="divide-y divide-gray-100 rounded-lg border border-gray-200 bg-white shadow-sm">
           <div className="flex justify-between gap-4 px-4 py-3">
             <dt className="text-sm text-gray-500">Name</dt>
-            <dd className="text-sm font-semibold text-gray-900 text-right">
+            <dd className="text-right text-sm font-semibold text-gray-900">
               {appointment.visitorName}
             </dd>
           </div>
           <div className="flex justify-between gap-4 px-4 py-3">
             <dt className="text-sm text-gray-500">Purpose</dt>
-            <dd className="text-sm text-gray-900 text-right">
+            <dd className="text-right text-sm text-gray-900">
               {appointment.purpose}
             </dd>
           </div>
@@ -157,14 +204,7 @@ export function AppointmentForm() {
           </div>
         </dl>
 
-        {error && (
-          <p
-            role="alert"
-            className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700"
-          >
-            {error}
-          </p>
-        )}
+        {error && <ErrorNotice error={error} />}
 
         <div className="space-y-2">
           <button
@@ -191,23 +231,21 @@ export function AppointmentForm() {
   return (
     <div className="space-y-6">
       <div className="text-center">
-        <h1 className="text-2xl font-bold tracking-tight text-gray-900">
+        <h1 className="text-2xl font-bold tracking-tight text-gray-900 sm:text-3xl">
           Appointment Check-in
         </h1>
-        <p className="mt-2 text-sm text-gray-500">
+        <p className="mt-2 text-base text-gray-500">
           Enter the reference number from your invitation
         </p>
       </div>
 
       <form onSubmit={handleLookup} noValidate className="space-y-4">
         <div>
-          <label
-            htmlFor="reference"
-            className="block text-sm font-medium text-gray-700 mb-1"
-          >
+          <label htmlFor="reference" className={labelClass}>
             Reference Number
           </label>
           <input
+            ref={referenceInput}
             id="reference"
             name="reference"
             type="text"
@@ -215,36 +253,58 @@ export function AppointmentForm() {
             autoFocus
             autoComplete="off"
             autoCapitalize="characters"
+            spellCheck={false}
+            enterKeyHint="go"
+            maxLength={MAX_REFERENCE_LENGTH}
             value={reference}
             onChange={(event) => {
               setReference(event.target.value.toUpperCase());
+              // Drop the previous attempt's complaint as soon as they retype.
               if (error) setError(null);
             }}
             placeholder="APT-1001"
             aria-invalid={Boolean(error)}
-            className={`${error ? errorInputClass : inputClass} text-center text-lg font-semibold tracking-widest uppercase`}
+            aria-describedby={error ? "reference-error" : undefined}
+            className={codeInputClass(Boolean(error))}
           />
         </div>
 
-        {error && (
-          <div
-            role="alert"
-            className="space-y-2 rounded-lg bg-red-50 px-3 py-3 text-sm text-red-700"
-          >
-            <p>{error}</p>
-            <Link
-              href="/kiosk/walkin"
-              className="inline-block font-semibold underline underline-offset-2 hover:text-red-900"
-            >
-              Register as a walk-in instead
-            </Link>
-          </div>
-        )}
+        {error && <ErrorNotice error={error} id="reference-error" />}
 
         <button type="submit" disabled={busy} className={primaryButtonClass}>
           {busy ? "Looking up…" : "Continue"}
         </button>
       </form>
+    </div>
+  );
+}
+
+/**
+ * One rendering for both stages. The walk-in escape hatch appears only when the
+ * reference itself is the problem.
+ */
+function ErrorNotice({ error, id }: { error: LookupError; id?: string }) {
+  if (!error.offerWalkIn) {
+    return (
+      <p id={id} role="alert" className={formErrorClass}>
+        {error.message}
+      </p>
+    );
+  }
+
+  return (
+    <div
+      id={id}
+      role="alert"
+      className={`${formErrorClass} space-y-2`}
+    >
+      <p>{error.message}</p>
+      <Link
+        href="/kiosk/walkin"
+        className="inline-block font-semibold underline underline-offset-2 hover:text-red-900"
+      >
+        Register as a walk-in instead
+      </Link>
     </div>
   );
 }

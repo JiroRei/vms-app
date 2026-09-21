@@ -4,10 +4,10 @@ A snapshot of where the Visitor Management System stands. Update this when the
 answer to "what works right now?" changes. For *what changed and when*, see
 [`CHANGELOG.md`](./CHANGELOG.md).
 
-**Last updated:** 2026-09-15
-**Branch:** `devspace` — local only, no remote tracking branch (`origin` has `main` and `staging`)
-**Last commit:** `d7ada93` — _feat: added functionalities for multiple modules, i.e. walk-in flow for kiosk and visitor logging_
-**Working tree:** ⚠️ uncommitted changes present — the return-later checkout flow (see CHANGELOG 2026-09-15)
+**Last updated:** 2026-09-18
+**Branch:** `clark_dev`
+**Last commit:** `48971c3` — _Merge pull request #1 from JiroRei/devspace_
+**Working tree:** ⚠️ uncommitted changes present — the kiosk/dashboard polish pass (see CHANGELOG 2026-09-18)
 
 ---
 
@@ -15,10 +15,10 @@ answer to "what works right now?" changes. For *what changed and when*, see
 
 | Check | Command | State |
 | --- | --- | --- |
-| Typecheck | `./node_modules/.bin/tsc --noEmit` | ✅ passing |
-| Lint | `npm run lint` | ✅ passing |
-| Production build | `npm run build` | ✅ passing |
-| Migrations | `npx prisma migrate status` | ✅ up to date — 4 applied |
+| Typecheck | `./node_modules/.bin/tsc --noEmit` | ✅ passing (2026-09-18) |
+| Lint | `npm run lint` | ✅ passing (2026-09-18) |
+| Production build | `npm run build` | ✅ passing (2026-09-18) |
+| Migrations | `npx prisma migrate status` | ⚠️ unverified — `P1000` against the local `vms` database on 2026-09-18; last known good was 4 applied |
 | Automated tests | — | ❌ none exist |
 
 ---
@@ -51,6 +51,8 @@ Legend: ✅ done · 🟡 partial / temporary · ❌ not implemented
 | Kiosk — walk-in check-in | ✅ | Name, purpose, host. Public/unauthenticated by design. |
 | Kiosk — appointment check-in | ✅ | Looked up by `referenceNumber`, single-use via a `used` flag in a transaction. |
 | Kiosk — delivery / courier | ✅ | Name only; host optional (a courier may not know the recipient). |
+| Kiosk — idle reset | ✅ | Warns at 45s, returns to the chooser at 60s. Mounted once in `src/app/kiosk/layout.tsx`. **New 2026-09-18.** |
+| Kiosk — form validation / error handling | ✅ | Field errors clear on edit, first invalid field is focused, submit is double-tap safe. |
 | Dashboard — live check-in list | ✅ | Polls every 5s, pauses on a backgrounded tab. Three states as of 2026-09-15. |
 | Dashboard — manual checkout | ✅ | Now behind the "will they return?" prompt. |
 | Dashboard — return-later flow | ✅ | `PENDING_RETURN` state + "Mark as returned". **New 2026-09-15.** |
@@ -58,12 +60,15 @@ Legend: ✅ done · 🟡 partial / temporary · ❌ not implemented
 | History — table, filters, pagination | ✅ | Search, host, date range, hide-deliveries. 25 rows/page. |
 | History — visitor frequency chart | ✅ | 30 days fetched; week view sliced client-side. |
 | Dark / light theme | ✅ | `ThemeToggle` in the dashboard sidebar. |
+| Shared date / time formatting | ✅ | `src/lib/dates.ts` — pinned locale, one format per surface. No inline formatting left anywhere. **New 2026-09-18.** |
+| Empty + loading states | ✅ | `EmptyState` / `TableSkeleton`, route-level `loading.tsx` for both dashboard pages. **New 2026-09-18.** |
+| Tablet / phone layout | ✅ | Kiosk sized for a tablet; live list becomes a card list below `md`. **New 2026-09-18.** |
 | Login + session | 🟡 | **Dev-only throwaway auth.** See the risk section below. |
 | Role enforcement (ADMIN / GUARD) | 🟡 | Enforced server-side in the API, but only as strong as the forgeable dev cookie. |
 | Group appointments | ❌ | Referenced in planning, but no model, route or UI exists in the codebase. |
 | Visitor identity across visits | ❌ | Out of scope by design — each check-in creates a fresh `Visitor` row. |
 | Automated test suite | ❌ | No runner configured. Verification has been manual/scripted per session. |
-| README | ❌ | Still the stock `create-next-app` text. |
+| README | ✅ | Setup, test logins, scripts, routes, quirks. **Rewritten 2026-09-18.** |
 
 ---
 
@@ -102,8 +107,12 @@ second row, which is why a round trip shows up in history as a single visit.
 
 ### Current dev database contents
 
-3 hosts · 4 appointments (`APT-1001`–`APT-1004`, `1004` pre-used) · 1 admin user
-· 49 visits (8 `ACTIVE`, 41 `CHECKED_OUT`).
+What `npm run db:seed` creates: 3 hosts · 4 appointments (`APT-1001`–`APT-1004`,
+`1004` pre-used) · 2 users (1 `ADMIN`, 1 `GUARD`).
+
+Visit rows are whatever check-ins the session has produced; as of 2026-09-15 the
+local database held 49 (8 `ACTIVE`, 41 `CHECKED_OUT`). Not re-counted on
+2026-09-18 — the local Postgres refused the credentials in `.env`.
 
 ---
 
@@ -149,9 +158,17 @@ npm run db:seed           # hosts, appointments, admin user
 npm run dev               # http://localhost:3000
 ```
 
-`.env` needs `DATABASE_URL` (see `.env.example`). Sign in with the seeded admin
-account — the credentials are printed by the seed script and defined in
-`prisma/seed.ts`.
+`.env` needs `DATABASE_URL` (see `.env.example`).
+
+### Test logins
+
+Seeded by `npm run db:seed`, printed by it on every run, defined in
+`prisma/seed.ts`. Plaintext dev fixtures — see the risk section below.
+
+| Role | Email | Password | Notes |
+| --- | --- | --- | --- |
+| `ADMIN` | `admin@geoplan.ph` | `admin123` | Sees and can run **Close all stale visits** |
+| `GUARD` | `guard@geoplan.ph` | `guard123` | Same dashboard without the cleanup button; `POST /api/visits/close-stale` returns 403 |
 
 | Script | Does |
 | --- | --- |
@@ -179,9 +196,9 @@ account — the credentials are printed by the seed script and defined in
 4. **Stale cleanup is manual.** `closeStaleVisits()` is deliberately
    parameterless and reads no request/session/cookie, so it is ready to be
    called by a cron job — but nothing schedules it yet.
-5. **`devspace` is unpushed** and the current work is uncommitted.
-6. Seeded admin credentials are committed in plaintext in `prisma/seed.ts`
-   (acceptable only while this stays a local dev fixture).
+5. **The current polish pass is uncommitted** on `clark_dev`.
+6. Seeded admin **and guard** credentials are committed in plaintext in
+   `prisma/seed.ts` (acceptable only while this stays a local dev fixture).
 
 ---
 
@@ -197,6 +214,15 @@ Things that cost time once and shouldn't cost it twice:
 - **`prisma migrate dev` did not regenerate the client** in this project — run
   `npx prisma generate` explicitly after a schema change, or new fields won't
   exist on the typed client.
+- **Restart `next dev` after a migration.** A running dev server keeps serving
+  the pre-migration client, so new columns look missing until it is restarted.
+- **`P1000: Authentication failed`** on a `prisma` command, or a 500 from
+  `/kiosk/walkin` and `/kiosk/delivery`, means `DATABASE_URL` is wrong or
+  Postgres is down. `/kiosk` and `/kiosk/appointment` still render, which makes
+  the failure easy to misread as a routing problem.
+- **`react-hooks/set-state-in-effect` is on and it is an error, not a warning.**
+  A hook that starts timers must do its setup without a synchronous `setState`
+  in the effect body — see `src/app/kiosk/use-idle-timeout.ts`.
 - **Adding a column with a default needs a backfill plan.** A plain
   `ADD COLUMN ... DEFAULT` applies that default to *every* existing row. Use
   `prisma migrate dev --create-only`, add the `UPDATE`, then apply.

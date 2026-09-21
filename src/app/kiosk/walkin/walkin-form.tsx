@@ -1,19 +1,26 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
+import {
+  fieldErrorClass,
+  formErrorClass,
+  inputClass,
+  labelClass,
+  primaryButtonClass,
+} from "@/app/kiosk/form-styles";
 import type { HostOption } from "@/lib/visits";
 
-type FieldErrors = Partial<Record<"name" | "purpose" | "hostId", string>>;
+type FieldName = "name" | "purpose" | "hostId";
+type FieldErrors = Partial<Record<FieldName, string>>;
 
-const inputClass =
-  "block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
-const errorInputClass =
-  "block w-full rounded-lg border border-red-400 px-3 py-2 text-sm shadow-sm placeholder:text-gray-400 focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500";
+/** Also the order the first invalid field is focused in. */
+const FIELD_ORDER: FieldName[] = ["name", "purpose", "hostId"];
 
 export function WalkinForm({ hosts }: { hosts: HostOption[] }) {
   const router = useRouter();
+  const formRef = useRef<HTMLFormElement>(null);
 
   const [name, setName] = useState("");
   const [purpose, setPurpose] = useState("");
@@ -34,6 +41,22 @@ export function WalkinForm({ hosts }: { hosts: HostOption[] }) {
     setCheckedIn(false);
   }
 
+  /**
+   * Drops a field's complaint the moment the visitor starts fixing it, rather
+   * than leaving stale red text under a box they have already corrected. The
+   * whole-form error goes too — it described the submit that is being redone.
+   */
+  function clearError(field: FieldName) {
+    setFormError(null);
+    setFieldErrors((current) => {
+      if (!current[field]) return current;
+
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+  }
+
   function validate(): FieldErrors {
     const errors: FieldErrors = {};
 
@@ -44,14 +67,28 @@ export function WalkinForm({ hosts }: { hosts: HostOption[] }) {
     return errors;
   }
 
+  /** Puts the cursor on the problem instead of making the visitor hunt for it. */
+  function focusFirstError(errors: FieldErrors) {
+    const first = FIELD_ORDER.find((field) => errors[field]);
+
+    if (first) {
+      formRef.current?.querySelector<HTMLElement>(`#${first}`)?.focus();
+    }
+  }
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    // The button is disabled while submitting, but a double-tap can land both
+    // presses before React has re-rendered it.
+    if (submitting) return;
 
     const errors = validate();
     setFieldErrors(errors);
     setFormError(null);
 
     if (Object.keys(errors).length > 0) {
+      focusFirstError(errors);
       return;
     }
 
@@ -72,7 +109,9 @@ export function WalkinForm({ hosts }: { hosts: HostOption[] }) {
         const data = await response.json().catch(() => null);
 
         if (data?.fieldErrors) {
-          setFieldErrors(data.fieldErrors as FieldErrors);
+          const serverErrors = data.fieldErrors as FieldErrors;
+          setFieldErrors(serverErrors);
+          focusFirstError(serverErrors);
         } else {
           setFormError(
             data?.error ?? "Could not complete check-in. Please try again.",
@@ -84,7 +123,9 @@ export function WalkinForm({ hosts }: { hosts: HostOption[] }) {
 
       setCheckedIn(true);
     } catch {
-      setFormError("Network problem — please try again.");
+      setFormError(
+        "Could not reach the check-in system. Please try again, or ask reception for help.",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -97,10 +138,10 @@ export function WalkinForm({ hosts }: { hosts: HostOption[] }) {
           <span className="text-5xl" role="img" aria-label="Checked in">
             ✅
           </span>
-          <h1 className="text-2xl font-bold tracking-tight text-gray-900">
+          <h1 className="text-2xl font-bold tracking-tight text-gray-900 sm:text-3xl">
             You&apos;re checked in!
           </h1>
-          <p className="text-sm text-gray-500">
+          <p className="text-base text-gray-500">
             Please take a seat — your host has been notified.
           </p>
         </div>
@@ -112,7 +153,7 @@ export function WalkinForm({ hosts }: { hosts: HostOption[] }) {
             // Pull a fresh host list for the next visitor.
             router.refresh();
           }}
-          className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 transition-colors"
+          className={primaryButtonClass}
         >
           Check in another visitor
         </button>
@@ -123,20 +164,22 @@ export function WalkinForm({ hosts }: { hosts: HostOption[] }) {
   return (
     <>
       <div className="text-center">
-        <h1 className="text-2xl font-bold tracking-tight text-gray-900">
+        <h1 className="text-2xl font-bold tracking-tight text-gray-900 sm:text-3xl">
           Walk-in Registration
         </h1>
-        <p className="mt-2 text-sm text-gray-500">
+        <p className="mt-2 text-base text-gray-500">
           Please fill in your details below
         </p>
       </div>
 
-      <form onSubmit={handleSubmit} noValidate className="space-y-4">
+      <form
+        ref={formRef}
+        onSubmit={handleSubmit}
+        noValidate
+        className="space-y-4"
+      >
         <div>
-          <label
-            htmlFor="name"
-            className="block text-sm font-medium text-gray-700 mb-1"
-          >
+          <label htmlFor="name" className={labelClass}>
             Full Name
           </label>
           <input
@@ -144,21 +187,27 @@ export function WalkinForm({ hosts }: { hosts: HostOption[] }) {
             name="name"
             type="text"
             value={name}
-            onChange={(event) => setName(event.target.value)}
+            onChange={(event) => {
+              setName(event.target.value);
+              clearError("name");
+            }}
             placeholder="John Doe"
+            // A kiosk is shared: never offer the previous visitor's details.
+            autoComplete="off"
+            enterKeyHint="next"
             aria-invalid={Boolean(fieldErrors.name)}
-            className={fieldErrors.name ? errorInputClass : inputClass}
+            aria-describedby={fieldErrors.name ? "name-error" : undefined}
+            className={inputClass(Boolean(fieldErrors.name))}
           />
           {fieldErrors.name && (
-            <p className="mt-1 text-sm text-red-600">{fieldErrors.name}</p>
+            <p id="name-error" className={fieldErrorClass}>
+              {fieldErrors.name}
+            </p>
           )}
         </div>
 
         <div>
-          <label
-            htmlFor="purpose"
-            className="block text-sm font-medium text-gray-700 mb-1"
-          >
+          <label htmlFor="purpose" className={labelClass}>
             Purpose of Visit
           </label>
           <input
@@ -166,30 +215,39 @@ export function WalkinForm({ hosts }: { hosts: HostOption[] }) {
             name="purpose"
             type="text"
             value={purpose}
-            onChange={(event) => setPurpose(event.target.value)}
+            onChange={(event) => {
+              setPurpose(event.target.value);
+              clearError("purpose");
+            }}
             placeholder="e.g. Meeting, Delivery, Interview"
+            autoComplete="off"
+            enterKeyHint="next"
             aria-invalid={Boolean(fieldErrors.purpose)}
-            className={fieldErrors.purpose ? errorInputClass : inputClass}
+            aria-describedby={fieldErrors.purpose ? "purpose-error" : undefined}
+            className={inputClass(Boolean(fieldErrors.purpose))}
           />
           {fieldErrors.purpose && (
-            <p className="mt-1 text-sm text-red-600">{fieldErrors.purpose}</p>
+            <p id="purpose-error" className={fieldErrorClass}>
+              {fieldErrors.purpose}
+            </p>
           )}
         </div>
 
         <div>
-          <label
-            htmlFor="hostId"
-            className="block text-sm font-medium text-gray-700 mb-1"
-          >
+          <label htmlFor="hostId" className={labelClass}>
             Host / Department
           </label>
           <select
             id="hostId"
             name="hostId"
             value={hostId}
-            onChange={(event) => setHostId(event.target.value)}
+            onChange={(event) => {
+              setHostId(event.target.value);
+              clearError("hostId");
+            }}
             aria-invalid={Boolean(fieldErrors.hostId)}
-            className={fieldErrors.hostId ? errorInputClass : inputClass}
+            aria-describedby={fieldErrors.hostId ? "hostId-error" : undefined}
+            className={inputClass(Boolean(fieldErrors.hostId))}
           >
             <option value="">Who are you here to see?</option>
             {hosts.map((host) => (
@@ -199,15 +257,14 @@ export function WalkinForm({ hosts }: { hosts: HostOption[] }) {
             ))}
           </select>
           {fieldErrors.hostId && (
-            <p className="mt-1 text-sm text-red-600">{fieldErrors.hostId}</p>
+            <p id="hostId-error" className={fieldErrorClass}>
+              {fieldErrors.hostId}
+            </p>
           )}
         </div>
 
         {formError && (
-          <p
-            role="alert"
-            className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700"
-          >
+          <p role="alert" className={formErrorClass}>
             {formError}
           </p>
         )}
@@ -215,7 +272,7 @@ export function WalkinForm({ hosts }: { hosts: HostOption[] }) {
         <button
           type="submit"
           disabled={submitting}
-          className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 transition-colors disabled:cursor-not-allowed disabled:bg-blue-300"
+          className={primaryButtonClass}
         >
           {submitting ? "Checking in…" : "Check In"}
         </button>

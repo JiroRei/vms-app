@@ -6,6 +6,93 @@ For the current state of the project rather than its history, see
 
 ---
 
+## 2026-09-18 — Kiosk hardening, shared formatting, docs
+
+**Status:** complete · typecheck, lint and production build pass ·
+⚠️ **uncommitted** on `clark_dev`
+**Scope:** presentation, kiosk form behaviour and documentation.
+**Deliberately untouched:** the visit lifecycle, every API route, the Prisma
+schema, and `src/lib/{visits,history,appointments,stale-visits}.ts` query logic.
+No migration was needed.
+
+A polish pass over the two surfaces people actually touch: the unattended kiosk
+and the guard's dashboard.
+
+### Added
+
+- **`src/lib/dates.ts` grew a display-formatting half** — `formatTime`,
+  `formatDate`, `formatShortDate`, `formatDateTime` and `formatDuration`, next
+  to the day-boundary helpers that were already there. The locale is **pinned to
+  `en-US`** rather than left as `[]`, which previously resolved to whatever
+  locale the browser or the server happened to run in. Unparseable or missing
+  values render as `—` instead of `Invalid Date`.
+- **Kiosk idle reset** — `src/app/kiosk/use-idle-timeout.ts` plus
+  `kiosk-idle-reset.tsx`, mounted once from a new `src/app/kiosk/layout.tsx` so
+  it covers all three flows *and* their "You're checked in!" screens. Prompts
+  "Are you still there?" at 45s, returns to `/kiosk` at 60s. Uses `replace`, not
+  `push`, so the back button cannot walk the next visitor into the previous
+  one's half-filled form. While the prompt is up, only its buttons dismiss it —
+  a passer-by brushing the screen must not cancel a reset already announced.
+- **`src/app/kiosk/form-styles.ts`** — one set of control classes for all three
+  kiosk forms, sized for a finger (~44px targets, 16px text so iOS Safari stops
+  zooming the page on focus).
+- **`EmptyState`** and **`TableSkeleton` / `SkeletonLine`** in `src/components/`.
+- **`loading.tsx`** for `/dashboard` and `/dashboard/history`.
+- **A seeded `GUARD` user** — `guard@geoplan.ph` / `guard123` — so role-gated
+  behaviour can be exercised both ways without hand-editing the database.
+
+### Changed
+
+- **Every timestamp** now goes through `src/lib/dates.ts`. `live-check-ins.tsx`,
+  `dashboard/history/page.tsx` and the chart labels in `lib/history.ts` each had
+  their own inline formatter with a different option set; none remain.
+- **History check-out cell** gained a "2h 15m on site" line under the timestamp.
+  Both ends of a finished visit are recorded, so it needs no clock and renders
+  identically on server and client.
+- **Walk-in, appointment and delivery forms**: field errors clear as soon as the
+  visitor edits that field, the first invalid field is focused on a failed
+  submit, `aria-describedby` wires errors to their inputs, submit handlers guard
+  against a double-tap landing before React re-renders the disabled button, and
+  inputs are `autoComplete="off"` (a kiosk is shared).
+- **Appointment lookup** now distinguishes an unusable reference (404/409) from
+  a failed request. "Register as a walk-in instead" only appears for the first —
+  it was previously offered after a network blip, throwing away a valid
+  appointment. A network failure at the confirm step now keeps the visitor on
+  the confirm screen, where one more tap retries.
+- **Live check-in list**: a "Updating…" pulse on the Live indicator while a poll
+  is in flight (the rows are never blanked, so the table cannot jump), and a
+  real empty state instead of the bare "No active check-ins".
+- **History empty state** now tells an empty log apart from an over-narrow
+  filter, and offers "Clear all filters" for the second.
+- **History filters** run the navigation inside `useTransition`, so Apply shows
+  "Applying…" and the current table stays on screen until the new one is ready.
+- **Responsive pass.** Kiosk screens use `min-h-dvh` (`100vh` counts the mobile
+  address bar and pushed the submit button below the fold) with vertical padding
+  so a tall form is not clipped by `justify-center`. The live check-in list
+  renders as **stacked cards below `md`** — its action buttons were off the
+  right edge of a phone, which is exactly where a roving guard needs them. The
+  history table gained a `min-w` so it scrolls instead of crushing five columns.
+  Dashboard gutters, nav links and dialog buttons resized for touch.
+
+### Docs
+
+- **`README.md`** rewritten from the stock `create-next-app` text: setup,
+  migrations, seeding, both test logins, seeded fixtures, scripts, routes, a
+  "what works right now" list and the known quirks.
+- **`STATUS.md`** refreshed — health checks, module table, test-login table, and
+  three new gotchas (restart `next dev` after a migration; what `P1000` looks
+  like from the app; `react-hooks/set-state-in-effect` is an error here).
+
+### Not verified
+
+The local Postgres refused the credentials in `.env` (`P1000`), so nothing
+DB-backed was exercised end to end this session: no seed run, no migration
+status, and `/kiosk/walkin`, `/kiosk/delivery`, `/dashboard` and
+`/dashboard/history` were not rendered against real data. Verified instead:
+typecheck, lint, production build, a unit check of all five formatters, and
+`/`, `/kiosk`, `/kiosk/appointment`, `/login` returning 200 with `/dashboard`
+redirecting to `/login`.
+
 ## 2026-09-15 — "Will you return today?" checkout flow
 
 **Status:** complete and verified · ⚠️ **uncommitted** on `devspace`

@@ -1,12 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useTransition } from "react";
 
 import type { HostOption } from "@/lib/visits";
 
 const controlClass =
-  "rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white dark:placeholder:text-gray-500";
+  "rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-60 dark:border-gray-600 dark:bg-gray-800 dark:text-white dark:placeholder:text-gray-500";
 
 export type FilterValues = {
   search: string;
@@ -30,11 +30,21 @@ export function HistoryFilters({
 }) {
   const router = useRouter();
 
+  // The results are server-rendered, so the round trip is invisible without
+  // this: the button would look dead for as long as the query takes. Inside a
+  // transition the current table stays on screen and un-blanked until the new
+  // one is ready, which is also what stops the page jumping.
+  const [pending, startTransition] = useTransition();
+
   const [search, setSearch] = useState(initial.search);
   const [hostId, setHostId] = useState(initial.hostId);
   const [from, setFrom] = useState(initial.from);
   const [to, setTo] = useState(initial.to);
   const [hideDeliveries, setHideDeliveries] = useState(initial.hideDeliveries);
+
+  function navigate(href: string) {
+    startTransition(() => router.push(href));
+  }
 
   function apply(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -49,7 +59,7 @@ export function HistoryFilters({
     // Any filter change invalidates the current page number.
 
     const query = params.toString();
-    router.push(query ? `/dashboard/history?${query}` : "/dashboard/history");
+    navigate(query ? `/dashboard/history?${query}` : "/dashboard/history");
   }
 
   function clear() {
@@ -58,7 +68,7 @@ export function HistoryFilters({
     setFrom("");
     setTo("");
     setHideDeliveries(false);
-    router.push("/dashboard/history");
+    navigate("/dashboard/history");
   }
 
   const hasFilters = Boolean(search || hostId || from || to || hideDeliveries);
@@ -145,7 +155,9 @@ export function HistoryFilters({
         />
       </div>
 
-      <div className="flex items-end gap-3">
+      {/* `flex-wrap` and `sm:col-span-2`: on a phone this row holds a checkbox
+          and two buttons that otherwise squeeze into unreadable slivers. */}
+      <div className="flex flex-wrap items-end gap-3 sm:col-span-2 lg:col-span-1">
         <label className="flex cursor-pointer items-center gap-2 pb-2 text-xs font-medium text-gray-600 dark:text-gray-300">
           <input
             type="checkbox"
@@ -158,15 +170,17 @@ export function HistoryFilters({
 
         <button
           type="submit"
-          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-500"
+          disabled={pending}
+          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-blue-300"
         >
-          Apply
+          {pending ? "Applying…" : "Apply"}
         </button>
         {hasFilters && (
           <button
             type="button"
             onClick={clear}
-            className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+            disabled={pending}
+            className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
           >
             Clear
           </button>

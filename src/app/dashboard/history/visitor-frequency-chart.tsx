@@ -120,7 +120,7 @@ export function VisitorFrequencyChart({
         </div>
       </div>
 
-      <div className="h-64 w-full">
+      <div className="h-56 w-full sm:h-64">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
             data={points}

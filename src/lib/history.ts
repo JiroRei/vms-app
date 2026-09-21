@@ -2,7 +2,11 @@ import "server-only";
 
 import type { Prisma } from "@/generated/prisma/client";
 import type { VisitStatus, VisitorType } from "@/generated/prisma/enums";
-import { startOfLocalDay, toLocalDateKey } from "@/lib/dates";
+import {
+  formatShortDate,
+  startOfLocalDay,
+  toLocalDateKey,
+} from "@/lib/dates";
 import { prisma } from "@/lib/prisma";
 
 export const PAGE_SIZE = 25;
@@ -164,11 +168,6 @@ export async function getVisitorFrequency(
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
 
-  const labelFormat = new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-  });
-
   return Array.from({ length: days }, (_, offset) => {
     const date = new Date(start);
     date.setDate(start.getDate() + offset);
@@ -177,7 +176,7 @@ export async function getVisitorFrequency(
 
     return {
       date: key,
-      label: labelFormat.format(date),
+      label: formatShortDate(date),
       count: counts.get(key) ?? 0,
     };
   });
