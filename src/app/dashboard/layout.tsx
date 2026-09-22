@@ -3,16 +3,14 @@ import { redirect } from "next/navigation";
 
 import { ThemeToggle } from "@/components/theme-toggle";
 import { signOut } from "@/app/login/actions";
-import { getDevSession } from "@/lib/dev-auth";
+import { getSession } from "@/lib/session";
 
 export default async function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  // TEMP: dev-only auth, replace with Better Auth call
-  // (`auth.api.getSession({ headers: await headers() })`).
-  const session = await getDevSession();
+  const session = await getSession();
 
   if (!session) {
     redirect("/login");

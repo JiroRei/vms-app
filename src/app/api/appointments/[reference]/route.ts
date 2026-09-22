@@ -1,6 +1,15 @@
 import { NextResponse } from "next/server";
 
 import { lookupAppointment } from "@/lib/appointments";
+import { clientIp, consumeRateLimit } from "@/lib/rate-limit";
+
+/**
+ * Reference numbers are short and sequential, so this endpoint is the one place
+ * an outsider could walk the space and read back a visitor's name, purpose and
+ * host. The limit leaves room for a visitor mistyping theirs a few times and
+ * takes automated enumeration off the table at the speed it needs.
+ */
+const LOOKUP_LIMIT = { window: 60, max: 30 };
 
 /**
  * GET /api/appointments/[reference] — look up a pre-registered visit.
@@ -10,9 +19,24 @@ import { lookupAppointment } from "@/lib/appointments";
  * message, but never reveals anything beyond the matched appointment.
  */
 export async function GET(
-  _request: Request,
+  request: Request,
   context: RouteContext<"/api/appointments/[reference]">,
 ) {
+  const limit = consumeRateLimit(
+    `appointment-lookup:${clientIp(request.headers)}`,
+    LOOKUP_LIMIT,
+  );
+
+  if (!limit.allowed) {
+    return NextResponse.json(
+      {
+        error:
+          "Too many lookups from this terminal just now. Please wait a moment, or ask reception for help.",
+      },
+      { status: 429, headers: { "Retry-After": String(limit.retryAfter) } },
+    );
+  }
+
   const { reference } = await context.params;
 
   if (!reference.trim()) {

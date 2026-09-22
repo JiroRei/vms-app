@@ -153,9 +153,12 @@ export function AppointmentForm() {
           <h1 className="text-2xl font-bold tracking-tight text-gray-900 sm:text-3xl">
             You&apos;re checked in!
           </h1>
+          {/* See the note in walkin-form: nothing notifies the host yet, so
+              this says only what checking in actually did. */}
           <p className="text-base text-gray-500">
-            Welcome, {appointment.visitorName}. Please take a seat —{" "}
-            {appointment.hostName} has been notified.
+            Welcome, {appointment.visitorName}. Please take a seat — reception
+            can see you&apos;ve arrived and will let {appointment.hostName}{" "}
+            know.
           </p>
         </div>
 

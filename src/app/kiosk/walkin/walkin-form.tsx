@@ -141,8 +141,15 @@ export function WalkinForm({ hosts }: { hosts: HostOption[] }) {
           <h1 className="text-2xl font-bold tracking-tight text-gray-900 sm:text-3xl">
             You&apos;re checked in!
           </h1>
+          {/*
+            Says only what the system actually does. Checking in puts the
+            visitor on the front desk's live list; telling the host is a person's
+            job, not the software's — nothing here sends a notification. When
+            one is built, this line can promise more.
+          */}
           <p className="text-base text-gray-500">
-            Please take a seat — your host has been notified.
+            Please take a seat — reception can see you&apos;ve arrived and will
+            let your host know.
           </p>
         </div>
 

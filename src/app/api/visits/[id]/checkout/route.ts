@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 
-// TEMP: dev-only auth, replace with Better Auth call.
-import { getDevSession } from "@/lib/dev-auth";
+import { getSession } from "@/lib/session";
 import { checkOutVisit } from "@/lib/visits";
 
 /** POST /api/visits/[id]/checkout — stamp `checkOutTime` on an active visit. */
@@ -9,8 +8,7 @@ export async function POST(
   _request: Request,
   context: RouteContext<"/api/visits/[id]/checkout">,
 ) {
-  // TEMP: dev-only auth, replace with Better Auth call.
-  const session = await getDevSession();
+  const session = await getSession();
 
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 
-// TEMP: dev-only auth, replace with Better Auth call.
-import { getDevSession } from "@/lib/dev-auth";
+import { getSession } from "@/lib/session";
 import { closeStaleVisits, countStaleVisits } from "@/lib/stale-visits";
 
 /**
@@ -11,8 +10,7 @@ import { closeStaleVisits, countStaleVisits } from "@/lib/stale-visits";
  * asking the user to approve an unknown quantity.
  */
 export async function GET() {
-  // TEMP: dev-only auth, replace with Better Auth call.
-  const session = await getDevSession();
+  const session = await getSession();
 
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -39,8 +37,7 @@ export async function GET() {
  * — a scheduled job can call it directly without going through this route.
  */
 export async function POST() {
-  // TEMP: dev-only auth, replace with Better Auth call.
-  const session = await getDevSession();
+  const session = await getSession();
 
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

@@ -8,7 +8,6 @@ import { signIn, type LoginFormState } from "./actions";
 const initialState: LoginFormState = {};
 
 export default function LoginPage() {
-  // TEMP: dev-only auth, replace with Better Auth call.
   const [state, formAction, pending] = useActionState(signIn, initialState);
 
   return (
