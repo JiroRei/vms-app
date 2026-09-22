@@ -40,6 +40,12 @@ Run against the dev cluster with the app on `localhost:3000`:
 | Cancel a redeemed appointment | 409 · cancel an unused one 200 · again 404 |
 | Guard → `POST /api/hosts` and `PATCH /api/hosts/[id]` | 403 both |
 | Deactivate a host | gone from the kiosk dropdown, still in the history filter |
+| Guard → `POST /api/staff`, `DELETE /api/staff/[id]` | 403 both |
+| Admin creates an account → that person signs in | 201 then 200 with the right role |
+| Duplicate email · password under 8 | 409 · 400 |
+| Admin demotes or deletes their own account | 409 both |
+| Change password: wrong current · correct | 400 · 200, old password then 401 and new 200 |
+| Remove an account | 200; its `account` and `session` rows cascade, none orphaned |
 
 ---
 
@@ -91,7 +97,8 @@ Legend: ✅ done · 🟡 partial / temporary · ❌ not implemented
 | Appointments — staff management | ✅ | Create, list and cancel at `/dashboard/appointments`. References are **generated**, 31^6 of them, from an alphabet with `O/0` and `I/1/L` removed. Optional `scheduledFor`. **New 2026-09-22.** |
 | Hosts — directory management | ✅ | Admin-only at `/dashboard/hosts`. Add, rename, move department, deactivate. **No delete** — see the cascade note below. **New 2026-09-22.** |
 | Host notification | ❌ | Nothing notifies anyone. The kiosk copy no longer claims otherwise. |
-| Staff account management | ❌ | Still seed-only. Sign-up is disabled, so `prisma/seed.ts` is the only door. |
+| Staff account management | ✅ | Admin-only at `/dashboard/staff`: create, promote/demote, remove. Accounts are written directly (user + credential `account` in one transaction) because `auth.api.signUpEmail` is refused by `disableSignUp` exactly as the HTTP route is. **New 2026-09-22.** |
+| Change your own password | ✅ | `/dashboard/account`, any signed-in user. Revokes other sessions; rate limited 5/min. **New 2026-09-22.** |
 | Group appointments | ❌ | Referenced in planning, but no model, route or UI exists in the codebase. |
 | Visitor identity across visits | ❌ | Out of scope by design — each check-in creates a fresh `Visitor` row. |
 | Automated test suite | ❌ | No runner configured. Verification has been manual/scripted per session. |
@@ -157,9 +164,11 @@ local database held 49 (8 `ACTIVE`, 41 `CHECKED_OUT`). Not re-counted on
 | `/kiosk` | public | Check-in method chooser |
 | `/kiosk/walkin` · `/kiosk/appointment` · `/kiosk/delivery` | public | The three check-in flows |
 | `/dashboard` | session | Live check-ins |
+| `/dashboard/account` | session | Change your own password |
 | `/dashboard/appointments` | session | Pre-register visitors; list and cancel |
 | `/dashboard/history` | session | Visit history + frequency chart |
 | `/dashboard/hosts` | **ADMIN** | Host directory (redirects a guard to `/dashboard`) |
+| `/dashboard/staff` | **ADMIN** | Staff logins (redirects a guard to `/dashboard`) |
 
 ### API
 
@@ -178,6 +187,10 @@ local database held 49 (8 `ACTIVE`, 41 `CHECKED_OUT`). Not re-counted on
 | `DELETE /api/appointments/[reference]` | session | Cancel an unredeemed pre-registration (409 once used) |
 | `POST /api/hosts` | **ADMIN** | Add a host |
 | `PATCH /api/hosts/[id]` | **ADMIN** | Rename, move department, activate / deactivate |
+| `POST /api/staff` | **ADMIN** | Create a dashboard login |
+| `PATCH /api/staff/[id]` | **ADMIN** | Promote / demote |
+| `DELETE /api/staff/[id]` | **ADMIN** | Remove a login (sessions + credential cascade) |
+| `POST /api/account/password` | session | Change your own password |
 | `GET·POST /api/auth/[...all]` | **public** | Better Auth: `/sign-in/email`, `/sign-out`, `/get-session`, `/update-user`, … |
 
 The three public kiosk endpoints and `/sign-in/email` are rate limited. Note
@@ -270,8 +283,14 @@ as the password-reset path.
 8. Seeded credentials are still written down in `prisma/seed.ts`. They are
    hashed in the database now, but `admin123` / `guard123` are fixtures and must
    be changed before this is deployed anywhere.
-9. **No password reset inside the app.** Better Auth exposes the endpoints but
-   nothing sends email, so re-running the seed is the reset path.
+9. **No password *reset*, only password *change*.** Someone who has forgotten
+   theirs cannot recover it themselves: Better Auth's reset endpoints need an
+   email sender and there isn't one. An administrator removing and re-creating
+   the account is the way back in, and re-seeding still works for the fixtures.
+10. **No audit trail.** Nothing records which guard checked a visitor out, or
+    who created an appointment. It is why deleting a staff account is safe —
+    nothing refers to it — and it is also a gap for a system whose job is
+    knowing who was in the building.
 
 ---
 

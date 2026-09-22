@@ -49,23 +49,31 @@ export default async function DashboardLayout({
           {/* The page redirects a guard who reaches it anyway, and the API
               returns 403 — hiding the link is convenience, not the control. */}
           {session.role === "ADMIN" && (
-            <Link
-              href="/dashboard/hosts"
-              className="block rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
-            >
-              Hosts
-            </Link>
+            <>
+              <Link
+                href="/dashboard/hosts"
+                className="block rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                Hosts
+              </Link>
+              <Link
+                href="/dashboard/staff"
+                className="block rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                Staff
+              </Link>
+            </>
           )}
         </nav>
         <div className="mt-6 space-y-3 border-t border-gray-200 pt-4 dark:border-gray-700">
-          <div>
-            <p className="truncate text-sm font-medium text-gray-900 dark:text-white">
+          <Link href="/dashboard/account" className="block">
+            <p className="truncate text-sm font-medium text-gray-900 hover:underline dark:text-white">
               {session.name}
             </p>
             <p className="text-xs text-gray-500 dark:text-gray-400">
               {session.role}
             </p>
-          </div>
+          </Link>
           <ThemeToggle />
           <form action={signOut}>
             <button

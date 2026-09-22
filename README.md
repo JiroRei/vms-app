@@ -72,9 +72,10 @@ fixtures defined in [`prisma/seed.ts`](./prisma/seed.ts) — change them before
 this is deployed anywhere. They are hashed on the way into the database; the
 seed is simply the one place they are written down.
 
-Because sign-up is disabled, **the seed is the only way an account comes into
-existence.** Re-running it re-hashes the fixture passwords, which is also how
-you reset a password you have changed.
+Sign-up is disabled, so an account comes from one of exactly two places: this
+seed, or an administrator creating one at `/dashboard/staff`. Re-running the
+seed re-hashes the fixture passwords, which is how you get back in if you have
+changed the admin password and forgotten it.
 
 | Role | Email | Password | Can do |
 | --- | --- | --- | --- |
@@ -116,9 +117,11 @@ appointment flow can be exercised repeatedly.
 | `/kiosk/walkin` | public | Name, purpose, host |
 | `/kiosk/delivery` | public | Courier drop-off; recipient optional |
 | `/dashboard` | session | Live check-ins + check-out actions |
+| `/dashboard/account` | session | Change your own password |
 | `/dashboard/appointments` | session | Pre-register a visitor, list and cancel |
 | `/dashboard/history` | session | Searchable visit log + frequency chart |
 | `/dashboard/hosts` | ADMIN | Host directory — add, rename, deactivate |
+| `/dashboard/staff` | ADMIN | Staff logins — create, promote, remove |
 | `/api/auth/*` | public | Better Auth's own endpoints (sign-in, sign-out, session) |
 
 The API routes are listed in [`STATUS.md`](./STATUS.md#api).
@@ -149,6 +152,11 @@ The API routes are listed in [`STATUS.md`](./STATUS.md#api).
   them, move their department, or deactivate them when they leave. There is no
   delete, on purpose: `Visitor.hostId` cascades, so removing a host row would
   take their visit history with it.
+- **Staff logins** at `/dashboard/staff` (admin only). Create an account,
+  promote or demote it, remove it. The last administrator cannot be removed or
+  demoted, and nobody can delete the account they are signed in as.
+- **Change your own password** at `/dashboard/account`. Other sessions are
+  revoked; the device doing it stays signed in.
 
 ✅ **Dashboard**
 
@@ -185,9 +193,8 @@ The API routes are listed in [`STATUS.md`](./STATUS.md#api).
 
 - **Host notification.** Nothing emails, texts or pages anyone. The kiosk says
   reception can see the visitor has arrived, which is all that is true.
-- **Staff account management.** Sign-up is disabled and there is no admin UI,
-  so `prisma/seed.ts` is still the only way to create a login.
 - Group appointments, visitor identity across visits, badge printing.
+- An audit trail — nothing records *which* guard checked a visitor out.
 - Any automated tests — verification is manual.
 - A scheduled job for the stale-visit cleanup (the function is ready for one).
 - Password reset / change from inside the app. Better Auth exposes the

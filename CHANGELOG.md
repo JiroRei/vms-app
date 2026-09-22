@@ -72,13 +72,40 @@ sign-up refusal, the `role`-escalation refusal, the rate limiter tripping at the
 sixth sign-in, and the full appointment round trip from creation through kiosk
 redemption to the live check-in list.
 
+### Then, the same day — staff accounts
+
+The last seed-only entity. `/dashboard/staff` (admin) creates, promotes,
+demotes and removes logins; `/dashboard/account` lets anyone change their own
+password.
+
+- **Accounts are written directly**, user + credential `account` in one
+  transaction, rather than through `auth.api.signUpEmail`. That call is refused
+  exactly as a request to `/api/auth/sign-up/email` would be — the
+  `disableSignUp` check lives inside the endpoint, not in the HTTP layer — so
+  going through it would have meant reopening public sign-up to use it.
+  Verified the long way round: an admin-created account signs in.
+- **Deleting a staff account is safe in a way deleting a host is not.** Nothing
+  in the visit chain references `User`; only `session` and `account` do, and
+  both cascade. An account's rows are its logins, not its history.
+- **Three guards on the way out:** nobody can delete the account they are
+  signed in as, nobody can demote themselves out of admin, and the last
+  administrator can be neither removed nor demoted — otherwise the only way
+  back in would be re-running the seed.
+- **The password change route brings its own rate limit**, for the same reason
+  the login action does: guessing a current password there would be as good as
+  guessing it at the login form, and `auth.api.*` skips Better Auth's limiter.
+  It revokes other sessions and reissues the current one.
+
 ### Known to be unfinished
 
-- **Staff accounts are still seed-only.** Sign-up is disabled and there is no
-  admin UI, so creating a guard login still means editing `prisma/seed.ts`.
 - Host notification remains unbuilt; the copy is honest about it now.
+- **No password reset, only change.** Someone who has forgotten theirs cannot
+  recover it — the reset endpoints need an email sender.
+- **No audit trail.** Nothing records which guard checked a visitor out or who
+  created an appointment. It is what makes deleting a staff account safe, and
+  it is a real gap for a system whose job is knowing who was in the building.
 - Still no automated tests. The verification table is a list of things someone
-  has to remember to re-run.
+  has to remember to re-run, and it is now nineteen rows long.
 
 ---
 
