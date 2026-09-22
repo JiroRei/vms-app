@@ -63,9 +63,17 @@ model Host {
   name       String
   department String
 
+  /// Whether the host still takes visitors. This is a soft delete, and it is
+  /// not optional politeness: `Visitor.hostId` cascades on delete, so removing
+  /// a host row would delete every visitor they ever received and, through
+  /// them, every one of those visits. Deactivating takes the host out of the
+  /// kiosk dropdown and leaves the history they are named in intact.
+  active Boolean @default(true)
+
   visitors     Visitor[]
   appointments Appointment[]
 
+  @@index([active])
   @@map("host")
 }
 
@@ -131,6 +139,12 @@ model Appointment {
   hostId String
   host   Host   @relation(fields: [hostId], references: [id], onDelete: Cascade)
 
+  /// When the visitor is expected. Optional: an appointment can be logged
+  /// before a time is agreed, and the reference still works at the kiosk —
+  /// nothing about redeeming one checks the clock. It orders the list and
+  /// answers "who are we expecting today?", which is all it is for.
+  scheduledFor DateTime?
+
   /// Set once the appointment has been redeemed at the kiosk. A reference
   /// number is single-use, so this is what makes a second attempt fail.
   used Boolean @default(false)
@@ -138,6 +152,7 @@ model Appointment {
   createdAt DateTime @default(now())
 
   @@index([hostId])
+  @@index([scheduledFor])
   @@map("appointment")
 }
 

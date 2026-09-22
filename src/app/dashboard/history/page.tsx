@@ -10,7 +10,10 @@ import {
   type HistoryFilters as Filters,
   type HistoryVisit,
 } from "@/lib/history";
-import { getHosts } from "@/lib/visits";
+// The full directory rather than `getHosts()`: a visit from last year still
+// belongs to whoever hosted it, so a host who has since left has to stay
+// filterable here even though the kiosk no longer offers them.
+import { listHosts } from "@/lib/hosts";
 
 import { HistoryFilters } from "./history-filters";
 import { VisitorFrequencyChart } from "./visitor-frequency-chart";
@@ -98,7 +101,7 @@ export default async function HistoryPage({
 
   const [history, hosts, frequency] = await Promise.all([
     getVisitHistory(filters),
-    getHosts(),
+    listHosts(),
     // Always 30 days; the chart's week view slices client-side.
     getVisitorFrequency(30),
   ]);

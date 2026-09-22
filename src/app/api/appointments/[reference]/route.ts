@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
-import { lookupAppointment } from "@/lib/appointments";
+import { cancelAppointment, lookupAppointment } from "@/lib/appointments";
 import { clientIp, consumeRateLimit } from "@/lib/rate-limit";
+import { getSession } from "@/lib/session";
 
 /**
  * Reference numbers are short and sequential, so this endpoint is the one place
@@ -68,6 +69,57 @@ export async function GET(
     console.error(`GET /api/appointments/${reference} failed`, error);
     return NextResponse.json(
       { error: "Could not look up that reference number." },
+      { status: 500 },
+    );
+  }
+}
+
+/**
+ * DELETE /api/appointments/[reference] — cancel a pre-registration.
+ *
+ * Staff-only, and the odd one out on this file: the GET above is the kiosk's
+ * and is public, while this is the front desk's. Method-level auth rather than
+ * a separate route, because both act on the same thing.
+ *
+ * A redeemed appointment cannot be cancelled — it has already produced a visit,
+ * and deleting the reference would leave that visit unexplained.
+ */
+export async function DELETE(
+  _request: Request,
+  context: RouteContext<"/api/appointments/[reference]">,
+) {
+  const session = await getSession();
+
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { reference } = await context.params;
+
+  try {
+    const result = await cancelAppointment(reference);
+
+    if (result === "not-found") {
+      return NextResponse.json(
+        { error: "That appointment no longer exists." },
+        { status: 404 },
+      );
+    }
+
+    if (result === "already-used") {
+      // Someone checked in on it, possibly seconds ago. The caller's view is
+      // stale rather than wrong, so this is a conflict, not a failure.
+      return NextResponse.json(
+        { error: "That visitor has already checked in, so it cannot be cancelled." },
+        { status: 409 },
+      );
+    }
+
+    return NextResponse.json({ cancelled: true });
+  } catch (error) {
+    console.error(`DELETE /api/appointments/${reference} failed`, error);
+    return NextResponse.json(
+      { error: "Could not cancel this appointment." },
       { status: 500 },
     );
   }

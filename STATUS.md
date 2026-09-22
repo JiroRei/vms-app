@@ -4,10 +4,10 @@ A snapshot of where the Visitor Management System stands. Update this when the
 answer to "what works right now?" changes. For *what changed and when*, see
 [`CHANGELOG.md`](./CHANGELOG.md).
 
-**Last updated:** 2026-09-18
+**Last updated:** 2026-09-22
 **Branch:** `clark_dev`
-**Last commit:** `48971c3` — _Merge pull request #1 from JiroRei/devspace_
-**Working tree:** ⚠️ uncommitted changes present — the kiosk/dashboard polish pass (see CHANGELOG 2026-09-18)
+**Last commit:** `f880f9b` — _feat: implement kiosk check-in flows, dashboard history filters, idle timeout reset, and shared UI components_
+**Working tree:** ⚠️ uncommitted changes present — Better Auth switch-on, appointment and host management (see CHANGELOG 2026-09-21 and 2026-09-22)
 
 ---
 
@@ -15,11 +15,31 @@ answer to "what works right now?" changes. For *what changed and when*, see
 
 | Check | Command | State |
 | --- | --- | --- |
-| Typecheck | `./node_modules/.bin/tsc --noEmit` | ✅ passing (2026-09-18) |
-| Lint | `npm run lint` | ✅ passing (2026-09-18) |
-| Production build | `npm run build` | ✅ passing (2026-09-18) |
-| Migrations | `npx prisma migrate status` | ⚠️ unverified — `P1000` against the local `vms` database on 2026-09-18; last known good was 4 applied |
+| Typecheck | `./node_modules/.bin/tsc --noEmit` | ✅ passing (2026-09-22) |
+| Lint | `npm run lint` | ✅ passing (2026-09-22) |
+| Production build | `npm run build` | ✅ passing (2026-09-22) |
+| Migrations | `npx prisma migrate status` | ✅ 7 applied (2026-09-22) against the dev cluster on **5433** |
+| Sign-in end to end | manual, via `curl` | ✅ verified (2026-09-22) — see below |
+| Appointment + host modules | manual, via `curl` | ✅ verified (2026-09-22) |
 | Automated tests | — | ❌ none exist |
+
+### What "verified" covered on 2026-09-22
+
+Run against the dev cluster with the app on `localhost:3000`:
+
+| Check | Result |
+| --- | --- |
+| Sign in, correct password | 200, `better-auth.session_token`, `Max-Age=28800`, `HttpOnly` |
+| Sign in, wrong password | 401 |
+| `POST /api/auth/sign-up/email` | 400 `EMAIL_PASSWORD_SIGN_UP_DISABLED` |
+| Guard `POST /api/auth/update-user {"role":"ADMIN"}` | 400 `role is not allowed to be set`; role unchanged in the database |
+| 6+ sign-ins inside a minute | 429 after the 5th |
+| Guard → `POST /api/visits/close-stale` | 403 · admin → 200 |
+| No session → `GET /api/visits` | 401 |
+| Create appointment → redeem at kiosk → live list | reference generated, redeemed 201, visitor appears |
+| Cancel a redeemed appointment | 409 · cancel an unused one 200 · again 404 |
+| Guard → `POST /api/hosts` and `PATCH /api/hosts/[id]` | 403 both |
+| Deactivate a host | gone from the kiosk dropdown, still in the history filter |
 
 ---
 
@@ -31,9 +51,9 @@ answer to "what works right now?" changes. For *what changed and when*, see
 | UI | React | 19.2.8 |
 | Styling | Tailwind CSS | v4 (via `@tailwindcss/postcss`) |
 | ORM | Prisma (driver adapter, **no** bundled query engine) | 7.10.0 |
-| Database | PostgreSQL via `@prisma/adapter-pg` + `pg` | local `vms` @ `localhost:5432` |
+| Database | PostgreSQL via `@prisma/adapter-pg` + `pg` | local `vms` @ **`localhost:5433`** |
 | Charts | Recharts | 3.10.1 |
-| Auth | Better Auth — **scaffolded, not active** | 1.7.5 |
+| Auth | Better Auth — **active** (email + password, scrypt, DB sessions) | 1.7.5 |
 | Package manager | Bun | 1.4.0 |
 
 Prisma 7 specifics: the connection URL lives in `prisma7.config.ts`, **not** in
@@ -63,8 +83,15 @@ Legend: ✅ done · 🟡 partial / temporary · ❌ not implemented
 | Shared date / time formatting | ✅ | `src/lib/dates.ts` — pinned locale, one format per surface. No inline formatting left anywhere. **New 2026-09-18.** |
 | Empty + loading states | ✅ | `EmptyState` / `TableSkeleton`, route-level `loading.tsx` for both dashboard pages. **New 2026-09-18.** |
 | Tablet / phone layout | ✅ | Kiosk sized for a tablet; live list becomes a card list below `md`. **New 2026-09-18.** |
-| Login + session | 🟡 | **Dev-only throwaway auth.** See the risk section below. |
-| Role enforcement (ADMIN / GUARD) | 🟡 | Enforced server-side in the API, but only as strong as the forgeable dev cookie. |
+| Login + session | ✅ | Better Auth email + password. Scrypt hash on `account`, session row in `session`, signed cookie, 8h expiry refreshed hourly while in use. **New 2026-09-21.** |
+| Sign-up | ✅ disabled | `disableSignUp: true`. The catch-all mounts every Better Auth route, so this is what keeps registration closed. Accounts come from the seed. |
+| Role enforcement (ADMIN / GUARD) | ✅ | Same server-side checks as before, now behind a real session. `role` is `input: false`, so `/api/auth/update-user` can't write it. |
+| Rate limiting | ✅ | Sign-in 5/min; kiosk check-in and appointment redeem 20/min; appointment lookup 30/min. In-memory, per process — see `src/lib/rate-limit.ts`. **New 2026-09-21.** |
+| Theme flash on load | ✅ fixed | Inline script in the root layout applies the stored theme before first paint; the toggle picks its icon in CSS rather than from state, so there is no hydration mismatch. **New 2026-09-21.** |
+| Appointments — staff management | ✅ | Create, list and cancel at `/dashboard/appointments`. References are **generated**, 31^6 of them, from an alphabet with `O/0` and `I/1/L` removed. Optional `scheduledFor`. **New 2026-09-22.** |
+| Hosts — directory management | ✅ | Admin-only at `/dashboard/hosts`. Add, rename, move department, deactivate. **No delete** — see the cascade note below. **New 2026-09-22.** |
+| Host notification | ❌ | Nothing notifies anyone. The kiosk copy no longer claims otherwise. |
+| Staff account management | ❌ | Still seed-only. Sign-up is disabled, so `prisma/seed.ts` is the only door. |
 | Group appointments | ❌ | Referenced in planning, but no model, route or UI exists in the codebase. |
 | Visitor identity across visits | ❌ | Out of scope by design — each check-in creates a fresh `Visitor` row. |
 | Automated test suite | ❌ | No runner configured. Verification has been manual/scripted per session. |
@@ -75,7 +102,10 @@ Legend: ✅ done · 🟡 partial / temporary · ❌ not implemented
 ## Data model
 
 Models: `User`, `Host`, `Visitor`, `Visit`, `Appointment`, plus Better Auth's
-`Session` / `Account` / `Verification` (tables exist, nothing writes to them yet).
+`Session` / `Account` / `Verification` — all three now live. A staff member's
+password is a scrypt hash on their `Account` row (`providerId: "credential"`,
+`accountId` = their own user id; sign-in matches on both). `User` carries no
+credential column at all as of migration `20260921093731_drop_user_password`.
 
 ### Visit lifecycle
 
@@ -127,7 +157,9 @@ local database held 49 (8 `ACTIVE`, 41 `CHECKED_OUT`). Not re-counted on
 | `/kiosk` | public | Check-in method chooser |
 | `/kiosk/walkin` · `/kiosk/appointment` · `/kiosk/delivery` | public | The three check-in flows |
 | `/dashboard` | session | Live check-ins |
+| `/dashboard/appointments` | session | Pre-register visitors; list and cancel |
 | `/dashboard/history` | session | Visit history + frequency chart |
+| `/dashboard/hosts` | **ADMIN** | Host directory (redirects a guard to `/dashboard`) |
 
 ### API
 
@@ -142,6 +174,16 @@ local database held 49 (8 `ACTIVE`, 41 `CHECKED_OUT`). Not re-counted on
 | `POST /api/visits/close-stale` | **ADMIN** | Run the cleanup |
 | `GET /api/appointments/[reference]` | **public** | Kiosk appointment lookup |
 | `POST /api/appointments/[reference]/check-in` | **public** | Redeem an appointment |
+| `POST /api/appointments` | session | Pre-register a visitor; generates the reference |
+| `DELETE /api/appointments/[reference]` | session | Cancel an unredeemed pre-registration (409 once used) |
+| `POST /api/hosts` | **ADMIN** | Add a host |
+| `PATCH /api/hosts/[id]` | **ADMIN** | Rename, move department, activate / deactivate |
+| `GET·POST /api/auth/[...all]` | **public** | Better Auth: `/sign-in/email`, `/sign-out`, `/get-session`, `/update-user`, … |
+
+The three public kiosk endpoints and `/sign-in/email` are rate limited. Note
+that the catch-all is exactly that: every endpoint Better Auth is configured to
+expose is reachable there, which is why sign-up is disabled and `role` is not a
+writable field.
 
 Every state-changing visit endpoint states its precondition in the `updateMany`
 WHERE clause, so a repeat or concurrent call returns **409** rather than
@@ -151,19 +193,36 @@ overwriting a timestamp. Unknown id returns **404**.
 
 ## Running it
 
+The dev database is a **separate Postgres cluster on port 5433**, created for
+this repo so the PostgreSQL service on 5432 is never touched. It is not a
+Windows service, so it has to be started by hand after a reboot:
+
+```bash
+# start / stop the dev cluster
+"/c/Program Files/PostgreSQL/18/bin/pg_ctl" -D "C:/Users/josep/pgdata/vms-dev" \
+  -l "C:/Users/josep/pgdata/vms-dev/server.log" start
+"/c/Program Files/PostgreSQL/18/bin/pg_ctl" -D "C:/Users/josep/pgdata/vms-dev" stop
+```
+
 ```bash
 bun install               # or npm install — postinstall runs `prisma generate`
 npx prisma migrate dev    # apply migrations
-npm run db:seed           # hosts, appointments, admin user
+npm run db:seed           # hosts, appointments, staff logins
 npm run dev               # http://localhost:3000
 ```
 
-`.env` needs `DATABASE_URL` (see `.env.example`).
+`npx prisma migrate reset` drops, re-migrates and re-seeds in one go — the
+fastest way back to a known state while testing.
+
+`.env` needs `DATABASE_URL`, `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL` (see
+`.env.example`). The app will not start without the secret.
 
 ### Test logins
 
 Seeded by `npm run db:seed`, printed by it on every run, defined in
-`prisma/seed.ts`. Plaintext dev fixtures — see the risk section below.
+`prisma/seed.ts`. The seed is the **only** way an account is created — sign-up
+is disabled — and re-running it re-hashes the fixture passwords, which doubles
+as the password-reset path.
 
 | Role | Email | Password | Notes |
 | --- | --- | --- | --- |
@@ -181,24 +240,38 @@ Seeded by `npm run db:seed`, printed by it on every run, defined in
 
 ## Known gaps and risks
 
-1. **🔴 Authentication is throwaway and insecure.** `src/lib/dev-auth.ts`
-   compares passwords in **plaintext** against `User.password`, and the session
-   cookie is **unsigned, unencrypted JSON** — anyone can forge one and claim
-   `ADMIN`. This must not reach any shared or public environment. Better Auth is
-   fully scaffolded in `src/lib/auth.ts` with a 5-step switch-on checklist in its
-   header comment.
-2. **Kiosk endpoints are deliberately public.** `POST /api/visits` and the
+1. **🔴 Deleting a `Host` row would delete visit history.** `Visitor.hostId` is
+   `onDelete: Cascade` and `Visit.visitorId` cascades from there, so one
+   `DELETE FROM host` takes every visitor that host ever received and every
+   visit those visitors made. Nothing in the app does this — host management is
+   soft-delete only and there is no DELETE route — but the cascade is still
+   loaded, and a hand-run query or a future "tidy up the directory" feature
+   would fire it. Changing the relation to `onDelete: Restrict` would make the
+   database refuse rather than rely on everyone remembering.
+2. **Seeded reference numbers are still sequential.** `APT-1001`–`APT-1004` are
+   fixtures, kept fixed so they can be documented and typed from memory.
+   Appointments created through the dashboard are random. If the seed fixtures
+   ever ship anywhere real, they are an enumeration foothold.
+3. **Rate limiting is in-memory and per process.** Fine for one node; behind a
+   load balancer the counters stop being shared, and `x-forwarded-for` is
+   trusted as given. It is a brake on automation, not an access control.
+4. **No automated tests.** Everything is verified by hand, with `curl` against a
+   running server. The 2026-09-22 table above is a list of checks someone has to
+   remember to repeat. A regression suite around the visit lifecycle, the
+   sign-in path and the role gates is the highest-value thing to add next.
+5. **Kiosk endpoints are deliberately public.** `POST /api/visits` and the
    appointment routes are unauthenticated because the kiosk is an unattended
-   terminal. There is no rate limiting on them.
-3. **No automated tests.** Everything has been verified by hand or by throwaway
-   scripts. A regression suite around the visit lifecycle is the highest-value
-   thing to add next.
-4. **Stale cleanup is manual.** `closeStaleVisits()` is deliberately
+   terminal. They are now rate limited; they are still open.
+6. **Stale cleanup is manual.** `closeStaleVisits()` is deliberately
    parameterless and reads no request/session/cookie, so it is ready to be
    called by a cron job — but nothing schedules it yet.
-5. **The current polish pass is uncommitted** on `clark_dev`.
-6. Seeded admin **and guard** credentials are committed in plaintext in
-   `prisma/seed.ts` (acceptable only while this stays a local dev fixture).
+7. **Everything since 2026-09-21 is uncommitted** on `clark_dev` — the auth
+   switch-on and both new modules.
+8. Seeded credentials are still written down in `prisma/seed.ts`. They are
+   hashed in the database now, but `admin123` / `guard123` are fixtures and must
+   be changed before this is deployed anywhere.
+9. **No password reset inside the app.** Better Auth exposes the endpoints but
+   nothing sends email, so re-running the seed is the reset path.
 
 ---
 
@@ -206,6 +279,21 @@ Seeded by `npm run db:seed`, printed by it on every run, defined in
 
 Things that cost time once and shouldn't cost it twice:
 
+- **`auth.api.*` called directly skips Better Auth's rate limiter.** The limiter
+  is an `onRequest` hook in the HTTP pipeline, so a server action that calls
+  `auth.api.signInEmail` never reaches it. That is why the login action carries
+  its own limit from `src/lib/rate-limit.ts` — without it, the form would have
+  been the unmetered way past the metered endpoint next to it.
+- **A Better Auth option is a public route.** `/api/auth/[...all]` mounts
+  everything the config exposes. Enabling something in `src/lib/auth.ts`
+  publishes its endpoint with no other edit; check what it adds first.
+- **The credential is on `account`, not `user`.** Sign-in looks for a row with
+  `providerId: "credential"` **and** `accountId` equal to the user's own id. Get
+  either wrong and a correct password reads as "invalid email or password".
+- **`prisma migrate diff` renamed its flags in Prisma 7** — it is `--from-schema`
+  / `--to-schema`, not `--from-schema-datamodel`. Diffing two schema files needs
+  no database, which is how the drop-password migration was written while
+  Postgres was unreachable.
 - **`npx tsc` doesn't work** — it resolves to a stub package that prints "This is
   not the tsc command you are looking for". Use `./node_modules/.bin/tsc --noEmit`.
 - **After adding or renaming an API route, run `npx next typegen`.** This Next.js

@@ -28,8 +28,16 @@ export type HostOption = {
   department: string;
 };
 
+/**
+ * The hosts a visitor can pick right now.
+ *
+ * Active only: someone who has left should not be offered at the kiosk. For the
+ * full directory — including people who have left but are still named in the
+ * history — use `listHosts()` in `src/lib/hosts.ts`.
+ */
 export async function getHosts(): Promise<HostOption[]> {
   return prisma.host.findMany({
+    where: { active: true },
     select: { id: true, name: true, department: true },
     orderBy: [{ department: "asc" }, { name: "asc" }],
   });

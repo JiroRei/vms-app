@@ -7,9 +7,9 @@ building and check them out again.
 - **Current state of each module** → [`STATUS.md`](./STATUS.md)
 - **What changed and when** → [`CHANGELOG.md`](./CHANGELOG.md)
 
-> ⚠️ **Login is throwaway dev-only auth.** Passwords are compared in plaintext
-> and the session cookie is unsigned JSON, so anyone can forge one and claim
-> `ADMIN`. Run this locally only. See [Known quirks](#known-quirks).
+Staff login runs on [Better Auth](https://better-auth.com): passwords are stored
+as scrypt hashes and sessions are rows in the database behind a signed cookie.
+Accounts come from the seed — there is no sign-up endpoint.
 
 ---
 
@@ -40,19 +40,41 @@ npm run db:seed
 npm run dev                  # http://localhost:3000
 ```
 
-`.env` needs only `DATABASE_URL`:
+`.env` needs two things:
 
 ```
-DATABASE_URL="postgresql://USER:PASSWORD@localhost:5432/vms?schema=public"
+DATABASE_URL="postgresql://USER:PASSWORD@localhost:5433/vms?schema=public"
+BETTER_AUTH_SECRET="…"   # openssl rand -base64 32
+BETTER_AUTH_URL="http://localhost:3000"
 ```
 
-Prisma 7 reads that URL from `prisma7.config.ts`, **not** from
-`schema.prisma` — there is no `url` field in the datasource block.
+> **Port 5433, not 5432.** This repo runs against its own Postgres cluster,
+> created so development never touches a shared server. It is not registered as
+> a Windows service, so start it after a reboot:
+>
+> ```bash
+> "/c/Program Files/PostgreSQL/18/bin/pg_ctl" -D "C:/Users/josep/pgdata/vms-dev" \
+>   -l "C:/Users/josep/pgdata/vms-dev/server.log" start
+> ```
+>
+> On another machine, point `DATABASE_URL` at whatever Postgres you like — the
+> app has no opinion beyond the URL.
+
+`BETTER_AUTH_SECRET` signs the session cookie, so the app will not start
+without it and rotating it signs everyone out. Prisma 7 reads the database URL
+from `prisma7.config.ts`, **not** from `schema.prisma` — there is no `url` field
+in the datasource block.
 
 ## Test logins
 
-Created by `npm run db:seed`, and printed by it on every run. Both are
-plaintext dev fixtures defined in [`prisma/seed.ts`](./prisma/seed.ts).
+Created by `npm run db:seed`, and printed by it on every run. The passwords are
+fixtures defined in [`prisma/seed.ts`](./prisma/seed.ts) — change them before
+this is deployed anywhere. They are hashed on the way into the database; the
+seed is simply the one place they are written down.
+
+Because sign-up is disabled, **the seed is the only way an account comes into
+existence.** Re-running it re-hashes the fixture passwords, which is also how
+you reset a password you have changed.
 
 | Role | Email | Password | Can do |
 | --- | --- | --- | --- |
@@ -94,7 +116,10 @@ appointment flow can be exercised repeatedly.
 | `/kiosk/walkin` | public | Name, purpose, host |
 | `/kiosk/delivery` | public | Courier drop-off; recipient optional |
 | `/dashboard` | session | Live check-ins + check-out actions |
+| `/dashboard/appointments` | session | Pre-register a visitor, list and cancel |
 | `/dashboard/history` | session | Searchable visit log + frequency chart |
+| `/dashboard/hosts` | ADMIN | Host directory — add, rename, deactivate |
+| `/api/auth/*` | public | Better Auth's own endpoints (sign-in, sign-out, session) |
 
 The API routes are listed in [`STATUS.md`](./STATUS.md#api).
 
@@ -111,6 +136,19 @@ The API routes are listed in [`STATUS.md`](./STATUS.md#api).
   and returns to the chooser screen at 60s, so it is clean for the next visitor.
 - Inline validation, disabled-while-submitting buttons, and errors that clear as
   soon as the visitor starts fixing them.
+
+✅ **Front desk**
+
+- **Pre-register a visitor** at `/dashboard/appointments` and hand them the
+  reference number the kiosk asks for. Generated, not sequential: six characters
+  from an alphabet with `O`/`0` and `I`/`1`/`L` taken out, so it survives being
+  read off a phone and typed on a tablet.
+- Cancel one that is no longer coming. A reference that has already been
+  redeemed cannot be cancelled — it produced a visit, and the visit stays.
+- **Host directory** at `/dashboard/hosts` (admin only). Add someone, rename
+  them, move their department, or deactivate them when they leave. There is no
+  delete, on purpose: `Visitor.hostId` cascades, so removing a host row would
+  take their visit history with it.
 
 ✅ **Dashboard**
 
@@ -130,12 +168,32 @@ The API routes are listed in [`STATUS.md`](./STATUS.md#api).
 - Laid out for a tablet kiosk and a phone-sized dashboard: the live list becomes
   a card list below `md` so check-out is reachable without sideways scrolling.
 
+✅ **Auth**
+
+- Better Auth with email + password. Hashed credentials on `account`, session
+  rows in `session`, signed cookie, 8-hour expiry that refreshes while in use.
+- **Sign-up is switched off.** The catch-all at `/api/auth/*` mounts every
+  Better Auth endpoint, so registration would otherwise be open to anyone who
+  found it. Accounts come from the seed.
+- `role` cannot be set through the API, so `/api/auth/update-user` can't be
+  used to self-promote to `ADMIN`.
+- Sign-in is rate limited (5/min per address), as are the public kiosk
+  endpoints — see [`src/lib/rate-limit.ts`](./src/lib/rate-limit.ts) for what
+  that does and doesn't cover.
+
 ❌ **Not built**
 
-- Real authentication (Better Auth is scaffolded but not switched on).
+- **Host notification.** Nothing emails, texts or pages anyone. The kiosk says
+  reception can see the visitor has arrived, which is all that is true.
+- **Staff account management.** Sign-up is disabled and there is no admin UI,
+  so `prisma/seed.ts` is still the only way to create a login.
 - Group appointments, visitor identity across visits, badge printing.
 - Any automated tests — verification is manual.
 - A scheduled job for the stale-visit cleanup (the function is ready for one).
+- Password reset / change from inside the app. Better Auth exposes the
+  endpoints, but nothing sends email, so re-seeding is the reset path.
+- Dark mode on `/` and `/login`. The toggle lives in the dashboard and only the
+  dashboard and kiosk carry dark styles.
 
 ---
 
@@ -143,6 +201,13 @@ The API routes are listed in [`STATUS.md`](./STATUS.md#api).
 
 Things that cost time once and shouldn't cost it twice.
 
+- **An option in `src/lib/auth.ts` is a public route.** `/api/auth/[...all]`
+  mounts whatever Better Auth is configured to expose, so enabling a feature
+  there publishes its endpoint without anything else being written. Check what
+  a new option adds before turning it on.
+- **Re-seed after migrating, or nobody can sign in.** Credentials live on
+  `account`, and a database that has never been seeded has no `account` rows —
+  a correct password then still fails with "invalid email or password".
 - **Restart `next dev` after a migration.** A schema change plus a regenerated
   client will not be picked up by a running dev server — stop it and start it
   again, or you will chase type errors that no longer exist.

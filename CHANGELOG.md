@@ -6,6 +6,163 @@ For the current state of the project rather than its history, see
 
 ---
 
+## 2026-09-22 — A database at last; appointments and hosts become manageable
+
+**Status:** complete · typecheck, lint and production build pass · **verified
+end to end against a running server** · ⚠️ **uncommitted** on `clark_dev`
+**Scope:** an isolated dev database, the two red lapses from yesterday's audit,
+and the two modules that were keeping the system from closing its own loop.
+
+Yesterday's work could not be run. It can now, and it was — every claim in
+`STATUS.md`'s verification table was checked with `curl` against a live server,
+including the ones that would have been embarrassing to get wrong (sign-up is
+refused; a guard cannot write their own `role`).
+
+### Added
+
+- **A dev Postgres cluster of this repo's own**, `initdb` into
+  `C:\Users\josep\pgdata\vms-dev` on **port 5433**, password auth, started with
+  `pg_ctl`. The PostgreSQL service on 5432 is untouched — its password was never
+  recovered and is no longer needed. Migrations 1–5 applied cleanly from empty.
+- **Appointment management** — `/dashboard/appointments`, `POST /api/appointments`,
+  `DELETE /api/appointments/[reference]`, and `createAppointment` /
+  `listAppointments` / `cancelAppointment` in `src/lib/appointments.ts`.
+
+  This closes a loop that was open: the kiosk could *redeem* a reference number
+  and nothing in the running application could *produce* one. Appointments
+  existed only in `prisma/seed.ts`, so pre-registering a visitor meant editing
+  TypeScript and re-seeding.
+
+  References are now generated rather than sequential — six characters from a
+  31-character alphabet with `O`/`0` and `I`/`1`/`L` removed, because a visitor
+  reads one off a phone and types it on a tablet. That is ~887 million, which
+  retires the enumeration finding from the 2026-09-21 audit for everything
+  except the seed fixtures, which stay fixed so they can be documented.
+- **`Appointment.scheduledFor`** (migration `20260922092908`) — nullable. The
+  kiosk does not check it; it orders the list and answers "who are we expecting
+  today?", which was unanswerable before.
+- **Host directory management** — `/dashboard/hosts` (admin only), `POST /api/hosts`,
+  `PATCH /api/hosts/[id]`, and a new `src/lib/hosts.ts`.
+- **`Host.active`** (migration `20260922093221`) — soft delete, and not as a
+  nicety. `Visitor.hostId` is `onDelete: Cascade` and `Visit.visitorId` cascades
+  from there, so deleting one host row would delete every visitor they ever
+  received and every visit those visitors made. There is deliberately **no**
+  DELETE route. `getHosts()` now returns active hosts only, so a host who has
+  left drops off the kiosk; the history filter uses the full directory, because
+  last year's visit still belongs to whoever hosted it.
+
+### Fixed
+
+- **The kiosk no longer tells visitors their host has been notified.** Nothing
+  notifies anyone — there is no email, no SMS, no queue anywhere in the
+  codebase. Both confirmation screens now say reception can see they have
+  arrived, which is the part that is true.
+- **An expired session no longer masquerades as a network fault.** The live list
+  caught the 401 from `/api/visits` and showed "Live updates paused — retrying…"
+  indefinitely, leaving a signed-out guard pressing check-out buttons that
+  quietly did nothing. A 401 from the poll or from any row action now says the
+  session ended and calls `router.refresh()`, which re-runs the layout's session
+  check and lands them on `/login`. The guard is a ref, not state, so the
+  in-flight interval cannot fire one more doomed request before it takes effect.
+
+### Verified
+
+See the table in `STATUS.md`. Twelve checks, including both role gates, the
+sign-up refusal, the `role`-escalation refusal, the rate limiter tripping at the
+sixth sign-in, and the full appointment round trip from creation through kiosk
+redemption to the live check-in list.
+
+### Known to be unfinished
+
+- **Staff accounts are still seed-only.** Sign-up is disabled and there is no
+  admin UI, so creating a guard login still means editing `prisma/seed.ts`.
+- Host notification remains unbuilt; the copy is honest about it now.
+- Still no automated tests. The verification table is a list of things someone
+  has to remember to re-run.
+
+---
+
+## 2026-09-21 — Better Auth switched on, rate limiting, theme flash
+
+**Status:** code complete · typecheck, lint and production build pass ·
+❌ **nothing verified against a database** — `.env` still holds the literal
+`YOUR_PASSWORD`, so the migration is unapplied, the seed has not run and no one
+has signed in · ⚠️ **uncommitted** on `clark_dev`
+**Scope:** authentication, the endpoints that take unauthenticated input, and
+one theme bug found while auditing.
+**Deliberately untouched:** the visit lifecycle, the shape of every visit API
+response, and the query logic in `src/lib/{visits,history,appointments,stale-visits}.ts`.
+
+The throwaway login is gone. `src/lib/dev-auth.ts` compared passwords in
+plaintext and handed out an unsigned JSON cookie that anyone could forge into an
+`ADMIN` session; both are replaced by Better Auth.
+
+### Added
+
+- **`src/lib/session.ts`** — the one place `auth.api.getSession` is called.
+  Wrapped in React's `cache`, so the dashboard layout and the page it renders
+  share a single lookup instead of each making its own round trip, and it
+  narrows `role` to the Prisma enum: anything that is not exactly `ADMIN` reads
+  as `GUARD`, because an unrecognised value is a reason to grant less.
+- **`src/app/api/auth/[...all]/route.ts`** — Better Auth's own endpoints. Only
+  `GET` and `POST` are exported; no other verb is used, so the rest 405 rather
+  than being silently routed.
+- **`src/lib/rate-limit.ts`** — a fixed-window in-memory limiter, applied to
+  sign-in (5/min), kiosk check-in and appointment redemption (20/min each) and
+  appointment lookup (30/min). The kiosk limits are sized for the busiest single
+  terminal, not for one visitor: every check-in from a kiosk shares one address,
+  so a queue at the door must still get through.
+- **Migration `20260921093731_drop_user_password`** — drops `user.password`.
+  Written with `prisma migrate diff --from-schema … --to-schema …`, which needs
+  no database connection.
+
+### Changed
+
+- **`src/lib/auth.ts`** activated, with three decisions worth naming:
+  - **`disableSignUp: true`.** The catch-all mounts *every* configured endpoint,
+    and that includes `POST /api/auth/sign-up/email`. Left open, anyone who
+    found it could issue themselves a `GUARD` account with dashboard access.
+  - **`role` stays `input: false`,** so the mounted `/api/auth/update-user`
+    cannot write it. Without that, a guard could promote themselves to `ADMIN`.
+  - **8-hour sessions refreshed hourly.** The default `updateAge` is a day,
+    which would never fire inside an 8-hour session and would drop a guard
+    mid-shift exactly 8 hours after they signed in.
+- **`src/app/login/actions.ts`** now calls `auth.api.signInEmail` /
+  `signOut`. It carries its own rate limit because Better Auth's limiter is an
+  `onRequest` hook in the HTTP pipeline that a direct `auth.api.*` call never
+  enters — the form would otherwise have been the unmetered way past the metered
+  endpoint beside it. A failed sign-in says the same thing whatever went wrong,
+  so the page can't be used to test which addresses have accounts.
+- **`prisma/seed.ts`** writes the credential as a scrypt hash on `account`,
+  using the same `hashPassword` Better Auth verifies against. Both halves
+  sign-in checks are set: `providerId: "credential"` and `accountId` equal to
+  the user's own id. Since sign-up is disabled, the seed is now the only way an
+  account comes into existence, and re-running it is the password reset.
+- **Theme no longer flashes.** An inline script in the root layout applies the
+  stored theme while the HTML is still parsing, per the pattern in Next's
+  `preventing-flash-before-hydration` guide. `ThemeToggle` now picks its icon in
+  CSS rather than from React state — branching on `theme` put the moon in the
+  server's HTML and the sun in the client's first render, a hydration mismatch
+  on every load in dark mode.
+- **The five call sites** that read a session now import `getSession` from
+  `@/lib/session`; the `// TEMP: dev-only auth` markers are gone.
+
+### Removed
+
+- **`src/lib/dev-auth.ts`** and the `password` column on `User`.
+
+### Known to be unfinished
+
+- Nothing here has been run. The next session's first job is a working
+  `DATABASE_URL`, then `npx prisma migrate dev`, `npm run db:seed`, and an
+  actual sign-in as both roles.
+- Appointment references are still sequential and still readable by anyone who
+  can reach the kiosk endpoint. Rate limiting slows enumeration; it does not fix
+  it.
+- `/` and `/login` have no dark styles, so the toggle has no effect there.
+
+---
+
 ## 2026-09-18 — Kiosk hardening, shared formatting, docs
 
 **Status:** complete · typecheck, lint and production build pass ·

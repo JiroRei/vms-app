@@ -35,11 +35,27 @@ export default async function DashboardLayout({
             Live Check-ins
           </Link>
           <Link
+            href="/dashboard/appointments"
+            className="block rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            Appointments
+          </Link>
+          <Link
             href="/dashboard/history"
             className="block rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
           >
             Visit History
           </Link>
+          {/* The page redirects a guard who reaches it anyway, and the API
+              returns 403 — hiding the link is convenience, not the control. */}
+          {session.role === "ADMIN" && (
+            <Link
+              href="/dashboard/hosts"
+              className="block rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+            >
+              Hosts
+            </Link>
+          )}
         </nav>
         <div className="mt-6 space-y-3 border-t border-gray-200 pt-4 dark:border-gray-700">
           <div>
