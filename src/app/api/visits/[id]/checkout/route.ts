@@ -17,7 +17,12 @@ export async function POST(
   const { id } = await context.params;
 
   try {
-    const { result, checkOutTime } = await checkOutVisit(id);
+    // The name is copied onto the visit so the audit line survives this
+    // account being removed later.
+    const { result, checkOutTime } = await checkOutVisit(id, {
+      id: session.userId,
+      name: session.name,
+    });
 
     if (result === "not-found") {
       return NextResponse.json({ error: "Visit not found." }, { status: 404 });

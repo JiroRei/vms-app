@@ -60,6 +60,13 @@ function StatusCell({ visit }: { visit: HistoryVisit }) {
         <span className="block text-xs text-gray-400 dark:text-gray-500">
           {formatDuration(visit.checkInTime, visit.checkOutTime)} on site
         </span>
+        {/* No name means the overnight cleanup closed it rather than a person
+            at the desk — a different kind of record, so it says so. */}
+        <span className="block text-xs text-gray-400 dark:text-gray-500">
+          {visit.checkedOutByName
+            ? `by ${visit.checkedOutByName}`
+            : "closed automatically"}
+        </span>
       </div>
     );
   }

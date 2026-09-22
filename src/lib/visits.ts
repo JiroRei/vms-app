@@ -139,6 +139,17 @@ async function readStatus(visitId: string): Promise<VisitStatus | null> {
 export type CheckOutResult = "checked-out" | "already-checked-out" | "not-found";
 
 /**
+ * Who is closing a visit.
+ *
+ * `null` is a real and meaningful value, not a missing one: the stale-visit
+ * cleanup closes visits that nobody attended to, and recording no name there is
+ * more honest than attributing the tidy-up to whoever happened to press the
+ * button. The name is copied rather than only referenced so the record survives
+ * the account being removed.
+ */
+export type CheckOutActor = { id: string; name: string } | null;
+
+/**
  * Ends a visit for good: stamps `checkOutTime` and moves it to CHECKED_OUT.
  *
  * Applies to an ACTIVE visit and to a PENDING_RETURN one alike — a visitor who
@@ -152,12 +163,18 @@ export type CheckOutResult = "checked-out" | "already-checked-out" | "not-found"
  */
 export async function checkOutVisit(
   visitId: string,
+  actor: CheckOutActor = null,
 ): Promise<{ result: CheckOutResult; checkOutTime?: string }> {
   const checkOutTime = new Date();
 
   const { count } = await prisma.visit.updateMany({
     where: { id: visitId, checkOutTime: null },
-    data: { checkOutTime, status: "CHECKED_OUT" },
+    data: {
+      checkOutTime,
+      status: "CHECKED_OUT",
+      checkedOutById: actor?.id ?? null,
+      checkedOutByName: actor?.name ?? null,
+    },
   });
 
   if (count > 0) {

@@ -28,6 +28,14 @@ export type HistoryVisit = {
    * that state right now reports PENDING_RETURN.
    */
   status: VisitStatus;
+  /**
+   * Who closed the visit, as their name read at the time.
+   *
+   * Null means nobody did: the stale-visit cleanup closed it because it was
+   * left open overnight. That is worth showing rather than hiding — "closed by
+   * the system" and "closed by a person at the desk" are different records.
+   */
+  checkedOutByName: string | null;
 };
 
 export type HistoryFilters = {
@@ -132,6 +140,7 @@ export async function getVisitHistory(
       checkInTime: visit.checkInTime.toISOString(),
       checkOutTime: visit.checkOutTime?.toISOString() ?? null,
       status: visit.status,
+      checkedOutByName: visit.checkedOutByName,
     })),
   };
 }

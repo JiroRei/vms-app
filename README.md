@@ -9,7 +9,8 @@ building and check them out again.
 
 Staff login runs on [Better Auth](https://better-auth.com): passwords are stored
 as scrypt hashes and sessions are rows in the database behind a signed cookie.
-Accounts come from the seed — there is no sign-up endpoint.
+There is no sign-up endpoint: accounts come from the seed or from an
+administrator at `/dashboard/staff`.
 
 ---
 
@@ -104,6 +105,8 @@ appointment flow can be exercised repeatedly.
 | `npm run db:migrate` | `prisma migrate dev` — create and apply a migration |
 | `npm run db:seed` | `tsx prisma/seed.ts` |
 | `npm run db:studio` | `prisma studio` — browse the data |
+| `npm test` | 54 tests against the `vms_test` database |
+| `npm run test:migrate` | Bring `vms_test` up to date after a migration |
 | `./node_modules/.bin/tsc --noEmit` | Typecheck (see quirks: `npx tsc` does **not** work) |
 
 ## Routes
@@ -123,6 +126,7 @@ appointment flow can be exercised repeatedly.
 | `/dashboard/hosts` | ADMIN | Host directory — add, rename, deactivate |
 | `/dashboard/staff` | ADMIN | Staff logins — create, promote, remove |
 | `/api/auth/*` | public | Better Auth's own endpoints (sign-in, sign-out, session) |
+| `/api/cron/close-stale` | `CRON_SECRET` | Scheduled stale-visit cleanup (503 unless configured) |
 
 The API routes are listed in [`STATUS.md`](./STATUS.md#api).
 
@@ -150,8 +154,8 @@ The API routes are listed in [`STATUS.md`](./STATUS.md#api).
   redeemed cannot be cancelled — it produced a visit, and the visit stays.
 - **Host directory** at `/dashboard/hosts` (admin only). Add someone, rename
   them, move their department, or deactivate them when they leave. There is no
-  delete, on purpose: `Visitor.hostId` cascades, so removing a host row would
-  take their visit history with it.
+  delete, on purpose — a host is named in every visit they ever received, and
+  the database now refuses to delete one that is (`onDelete: Restrict`).
 - **Staff logins** at `/dashboard/staff` (admin only). Create an account,
   promote or demote it, remove it. The last administrator cannot be removed or
   demoted, and nobody can delete the account they are signed in as.

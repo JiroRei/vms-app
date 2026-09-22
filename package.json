@@ -10,6 +10,8 @@
     "db:migrate": "prisma migrate dev",
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio",
+    "test": "node --import tsx --import ./tests/setup.ts --conditions=react-server --test --test-concurrency=1 tests/*.test.ts",
+    "test:migrate": "tsx tests/migrate.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {

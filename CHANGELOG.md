@@ -6,6 +6,65 @@ For the current state of the project rather than its history, see
 
 ---
 
+## 2026-09-22 (second pass) — Tests, and the lapses the audit had been listing
+
+**Status:** complete · typecheck, lint, production build and **54 tests** pass ·
+⚠️ **uncommitted** on `clark_dev`
+
+The backlog had been accumulating known-but-unfixed items for three sessions.
+This clears everything that is not blocked on infrastructure, and says plainly
+which two are.
+
+### Added
+
+- **A test suite — `npm test`, 54 tests, no new dependencies.** `node --test`
+  driven through tsx with `--conditions=react-server`, which is what lets the
+  `server-only` modules load outside Next.
+  - Runs against a **separate `vms_test` database**, derived from
+    `DATABASE_URL` by `tests/setup.ts` rather than configured on its own. There
+    is no second connection string to keep correct, and a stale one cannot
+    quietly point the suite at data someone cares about — it refuses outright
+    unless the database name ends in `_test`.
+  - `--test-concurrency=1`, because the files share a database and parallel
+    resets were wiping each other mid-test.
+  - Covers the visit lifecycle including both concurrency races, appointment
+    single-use under simultaneous redemption, the stale-cleanup close-time
+    rule, the last-administrator guards, the rate limiter and the formatters.
+- **`POST /api/cron/close-stale`** — a token-authenticated door for a
+  scheduler. `closeStaleVisits()` was always parameterless for this. **Closed
+  with 503 unless `CRON_SECRET` is set**, so a missing value fails safe rather
+  than leaving an unauthenticated endpoint that empties the live list.
+- **Check-out attribution.** `Visit.checkedOutById` and `checkedOutByName`.
+  Two columns on purpose: the id is the live link and goes null if the account
+  is removed, while the name is a copy taken at the time and does not — an
+  audit line that evaporates when someone leaves is not an audit line. Both
+  null means the overnight cleanup closed it, and that absence is itself the
+  fact worth recording. History shows "by Rosa Santos" or "closed
+  automatically".
+
+### Changed
+
+- **`Visitor.hostId` and `Appointment.hostId` are now `onDelete: Restrict`.**
+  Under `Cascade`, one `DELETE FROM host` took every visitor that host ever
+  received and — through `Visit.visitorId` — every one of those visits. Nothing
+  in the app did that, but the cascade was loaded and pointed at the history.
+  The database now refuses. Three tests hold the line.
+- **Dark mode reaches `/` and `/login`.** The toggle had no effect on either.
+  The kiosk stays light deliberately: a door tablet has no stored preference
+  and never will.
+
+### Blocked, not forgotten
+
+Both need a provider and credentials that do not exist yet, so neither is
+buildable from here:
+
+- **Host notification.** Nothing emails, texts or pages anyone. The kiosk copy
+  has been honest about this since the first pass.
+- **Password reset for a forgotten password.** Better Auth's reset endpoints
+  need a mail sender. Changing a password you know works today.
+
+---
+
 ## 2026-09-22 — A database at last; appointments and hosts become manageable
 
 **Status:** complete · typecheck, lint and production build pass · **verified

@@ -4,7 +4,7 @@ A snapshot of where the Visitor Management System stands. Update this when the
 answer to "what works right now?" changes. For *what changed and when*, see
 [`CHANGELOG.md`](./CHANGELOG.md).
 
-**Last updated:** 2026-09-22
+**Last updated:** 2026-09-22 (second pass)
 **Branch:** `clark_dev`
 **Last commit:** `f880f9b` — _feat: implement kiosk check-in flows, dashboard history filters, idle timeout reset, and shared UI components_
 **Working tree:** ⚠️ uncommitted changes present — Better Auth switch-on, appointment and host management (see CHANGELOG 2026-09-21 and 2026-09-22)
@@ -21,7 +21,7 @@ answer to "what works right now?" changes. For *what changed and when*, see
 | Migrations | `npx prisma migrate status` | ✅ 7 applied (2026-09-22) against the dev cluster on **5433** |
 | Sign-in end to end | manual, via `curl` | ✅ verified (2026-09-22) — see below |
 | Appointment + host modules | manual, via `curl` | ✅ verified (2026-09-22) |
-| Automated tests | — | ❌ none exist |
+| Automated tests | `npm test` | ✅ **54 passing** (2026-09-22) — visit lifecycle, appointments, staff, stale cleanup, rate limiter, formatters |
 
 ### What "verified" covered on 2026-09-22
 
@@ -82,7 +82,7 @@ Legend: ✅ done · 🟡 partial / temporary · ❌ not implemented
 | Dashboard — live check-in list | ✅ | Polls every 5s, pauses on a backgrounded tab. Three states as of 2026-09-15. |
 | Dashboard — manual checkout | ✅ | Now behind the "will they return?" prompt. |
 | Dashboard — return-later flow | ✅ | `PENDING_RETURN` state + "Mark as returned". **New 2026-09-15.** |
-| Dashboard — stale visit cleanup | ✅ | Admin-only. Manual button; no scheduled job yet. |
+| Dashboard — stale visit cleanup | ✅ | Admin-only button, **plus** `POST /api/cron/close-stale` for a scheduler. Closed with 503 unless `CRON_SECRET` is set. **Scheduled route new 2026-09-22.** |
 | History — table, filters, pagination | ✅ | Search, host, date range, hide-deliveries. 25 rows/page. |
 | History — visitor frequency chart | ✅ | 30 days fetched; week view sliced client-side. |
 | Dark / light theme | ✅ | `ThemeToggle` in the dashboard sidebar. |
@@ -96,12 +96,15 @@ Legend: ✅ done · 🟡 partial / temporary · ❌ not implemented
 | Theme flash on load | ✅ fixed | Inline script in the root layout applies the stored theme before first paint; the toggle picks its icon in CSS rather than from state, so there is no hydration mismatch. **New 2026-09-21.** |
 | Appointments — staff management | ✅ | Create, list and cancel at `/dashboard/appointments`. References are **generated**, 31^6 of them, from an alphabet with `O/0` and `I/1/L` removed. Optional `scheduledFor`. **New 2026-09-22.** |
 | Hosts — directory management | ✅ | Admin-only at `/dashboard/hosts`. Add, rename, move department, deactivate. **No delete** — see the cascade note below. **New 2026-09-22.** |
-| Host notification | ❌ | Nothing notifies anyone. The kiosk copy no longer claims otherwise. |
+| Host notification | ❌ **blocked** | Needs an email or SMS provider and its credentials. Nothing notifies anyone; the kiosk copy no longer claims otherwise. |
+| Password reset (forgotten) | ❌ **blocked** | Same blocker — Better Auth's reset endpoints need a mail sender. Changing a known password works. |
 | Staff account management | ✅ | Admin-only at `/dashboard/staff`: create, promote/demote, remove. Accounts are written directly (user + credential `account` in one transaction) because `auth.api.signUpEmail` is refused by `disableSignUp` exactly as the HTTP route is. **New 2026-09-22.** |
 | Change your own password | ✅ | `/dashboard/account`, any signed-in user. Revokes other sessions; rate limited 5/min. **New 2026-09-22.** |
 | Group appointments | ❌ | Referenced in planning, but no model, route or UI exists in the codebase. |
 | Visitor identity across visits | ❌ | Out of scope by design — each check-in creates a fresh `Visitor` row. |
-| Automated test suite | ❌ | No runner configured. Verification has been manual/scripted per session. |
+| Automated test suite | ✅ | 54 tests, `npm test`. `node --test` + tsx, no new dependencies. Runs against a separate `vms_test` database derived from `DATABASE_URL`. **New 2026-09-22.** |
+| Check-out attribution | ✅ | `Visit.checkedOutById` + `checkedOutByName`. The name is a copy, so the record survives the account being deleted; both null means the cleanup closed it. **New 2026-09-22.** |
+| Dark mode on `/` and `/login` | ✅ | **New 2026-09-22.** The kiosk stays light by design — a door tablet has no stored preference. |
 | README | ✅ | Setup, test logins, scripts, routes, quirks. **Rewritten 2026-09-18.** |
 
 ---
@@ -253,14 +256,10 @@ as the password-reset path.
 
 ## Known gaps and risks
 
-1. **🔴 Deleting a `Host` row would delete visit history.** `Visitor.hostId` is
-   `onDelete: Cascade` and `Visit.visitorId` cascades from there, so one
-   `DELETE FROM host` takes every visitor that host ever received and every
-   visit those visitors made. Nothing in the app does this — host management is
-   soft-delete only and there is no DELETE route — but the cascade is still
-   loaded, and a hand-run query or a future "tidy up the directory" feature
-   would fire it. Changing the relation to `onDelete: Restrict` would make the
-   database refuse rather than rely on everyone remembering.
+1. ~~Deleting a `Host` row would delete visit history.~~ **Fixed 2026-09-22.**
+   `Visitor.hostId` and `Appointment.hostId` are now `onDelete: Restrict`, so
+   the database refuses the delete instead of cascading it away. Two tests hold
+   the line. Hosts are still retired with `active: false`.
 2. **Seeded reference numbers are still sequential.** `APT-1001`–`APT-1004` are
    fixtures, kept fixed so they can be documented and typed from memory.
    Appointments created through the dashboard are random. If the seed fixtures
@@ -268,16 +267,16 @@ as the password-reset path.
 3. **Rate limiting is in-memory and per process.** Fine for one node; behind a
    load balancer the counters stop being shared, and `x-forwarded-for` is
    trusted as given. It is a brake on automation, not an access control.
-4. **No automated tests.** Everything is verified by hand, with `curl` against a
-   running server. The 2026-09-22 table above is a list of checks someone has to
-   remember to repeat. A regression suite around the visit lifecycle, the
-   sign-in path and the role gates is the highest-value thing to add next.
+4. **Tests cover the libraries, not the HTTP layer.** 54 tests exercise the
+   visit lifecycle, appointments, staff and the cleanup directly against the
+   database. The role gates and status codes on the routes above them are still
+   only checked by hand with `curl` — that is the next layer to automate.
 5. **Kiosk endpoints are deliberately public.** `POST /api/visits` and the
    appointment routes are unauthenticated because the kiosk is an unattended
    terminal. They are now rate limited; they are still open.
-6. **Stale cleanup is manual.** `closeStaleVisits()` is deliberately
-   parameterless and reads no request/session/cookie, so it is ready to be
-   called by a cron job — but nothing schedules it yet.
+6. **Stale cleanup has a door but no scheduler.** `POST /api/cron/close-stale`
+   exists and is token-authenticated; nothing on this machine calls it yet. A
+   Windows Task Scheduler entry or a cron line is all that is missing.
 7. **Everything since 2026-09-21 is uncommitted** on `clark_dev` — the auth
    switch-on and both new modules.
 8. Seeded credentials are still written down in `prisma/seed.ts`. They are

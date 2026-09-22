@@ -55,6 +55,10 @@ model User {
   sessions Session[]
   accounts Account[]
 
+  /// Visits this person closed. `onDelete: SetNull` on the other side, so
+  /// removing a staff account never removes a visit.
+  visitsCheckedOut Visit[] @relation("VisitCheckedOutBy")
+
   @@map("user")
 }
 
@@ -88,8 +92,14 @@ model Visitor {
 
   /// Optional: a courier may have no named recipient, so a delivery can be
   /// logged without a host. Guests always carry one.
+  ///
+  /// `Restrict`, not `Cascade`. Under Cascade, deleting one host row deleted
+  /// every visitor they ever received and — through `Visit.visitorId` — every
+  /// one of those visits. Hosts are retired with `active: false` instead, and
+  /// this makes the database refuse the destructive path rather than leaving it
+  /// to everyone remembering not to take it.
   hostId String?
-  host   Host?   @relation(fields: [hostId], references: [id], onDelete: Cascade)
+  host   Host?   @relation(fields: [hostId], references: [id], onDelete: Restrict)
 
   visits Visit[]
 
@@ -117,11 +127,26 @@ model Visit {
   /// check-out ends it. Cleared again when they are marked as returned.
   exitTime DateTime?
 
+  /// Who closed this visit.
+  ///
+  /// Two columns rather than one on purpose. The id is the live link, and goes
+  /// null if the account is ever removed; the name is a copy taken at the time
+  /// and does not, so the record still reads "checked out by Rosa Santos" long
+  /// after Rosa's login is gone. An audit line that evaporates when someone
+  /// leaves is not an audit line.
+  ///
+  /// Both are null for a visit closed by the stale-visit cleanup, which is
+  /// nobody — and that absence is itself the useful fact.
+  checkedOutById   String?
+  checkedOutBy     User?   @relation("VisitCheckedOutBy", fields: [checkedOutById], references: [id], onDelete: SetNull)
+  checkedOutByName String?
+
   createdAt DateTime @default(now())
 
   @@index([visitorId])
   @@index([checkOutTime])
   @@index([status])
+  @@index([checkedOutById])
   @@map("visit")
 }
 
@@ -136,8 +161,10 @@ model Appointment {
   visitorName     String
   purpose         String
 
+  /// `Restrict` for the same reason as `Visitor.hostId`: deleting a host
+  /// should never silently take pre-registrations with it.
   hostId String
-  host   Host   @relation(fields: [hostId], references: [id], onDelete: Cascade)
+  host   Host   @relation(fields: [hostId], references: [id], onDelete: Restrict)
 
   /// When the visitor is expected. Optional: an appointment can be logged
   /// before a time is agreed, and the reference still works at the kiosk —
