@@ -1,5 +1,4 @@
-// TEMP: dev-only auth, replace with Better Auth call.
-import { getDevSession } from "@/lib/dev-auth";
+import { getSession } from "@/lib/session";
 import { getActiveVisits } from "@/lib/visits";
 
 import { CloseStaleVisits } from "./close-stale-visits";
@@ -10,7 +9,7 @@ export default async function DashboardPage() {
   // to /login before this renders.
   const [visits, session] = await Promise.all([
     getActiveVisits(),
-    getDevSession(),
+    getSession(),
   ]);
 
   return (

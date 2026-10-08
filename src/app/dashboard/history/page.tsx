@@ -1,13 +1,19 @@
 import Link from "next/link";
 
+import { EmptyState } from "@/components/empty-state";
 import { VisitorTypeBadge } from "@/components/visitor-type-badge";
+import { formatDateTime, formatDuration } from "@/lib/dates";
 import {
   getVisitHistory,
   getVisitorFrequency,
   PAGE_SIZE,
+  type HistoryFilters as Filters,
   type HistoryVisit,
 } from "@/lib/history";
-import { getHosts } from "@/lib/visits";
+// The full directory rather than `getHosts()`: a visit from last year still
+// belongs to whoever hosted it, so a host who has since left has to stay
+// filterable here even though the kiosk no longer offers them.
+import { listHosts } from "@/lib/hosts";
 
 import { HistoryFilters } from "./history-filters";
 import { VisitorFrequencyChart } from "./visitor-frequency-chart";
@@ -21,13 +27,15 @@ function readParam(
   return typeof value === "string" ? value : "";
 }
 
-function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString([], {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+/** Whether the visitor is looking at a filtered view or the whole log. */
+function hasActiveFilters(filters: Filters): boolean {
+  return Boolean(
+    filters.search ||
+      filters.hostId ||
+      filters.from ||
+      filters.to ||
+      filters.hideDeliveries,
+  );
 }
 
 /**
@@ -43,12 +51,23 @@ function formatDateTime(iso: string): string {
 function StatusCell({ visit }: { visit: HistoryVisit }) {
   if (visit.checkOutTime) {
     return (
-      <span
-        className="tabular-nums text-gray-600 dark:text-gray-300"
-        suppressHydrationWarning
-      >
-        {formatDateTime(visit.checkOutTime)}
-      </span>
+      <div suppressHydrationWarning>
+        <span className="tabular-nums text-gray-600 dark:text-gray-300">
+          {formatDateTime(visit.checkOutTime)}
+        </span>
+        {/* Both ends of the stay are recorded, so this is fixed history — no
+            clock needed, and it renders identically on server and client. */}
+        <span className="block text-xs text-gray-400 dark:text-gray-500">
+          {formatDuration(visit.checkInTime, visit.checkOutTime)} on site
+        </span>
+        {/* No name means the overnight cleanup closed it rather than a person
+            at the desk — a different kind of record, so it says so. */}
+        <span className="block text-xs text-gray-400 dark:text-gray-500">
+          {visit.checkedOutByName
+            ? `by ${visit.checkedOutByName}`
+            : "closed automatically"}
+        </span>
+      </div>
     );
   }
 
@@ -78,7 +97,7 @@ export default async function HistoryPage({
   // to /login before this renders.
   const params = await searchParams;
 
-  const filters = {
+  const filters: Filters = {
     search: readParam(params, "search"),
     hostId: readParam(params, "hostId"),
     from: readParam(params, "from"),
@@ -89,7 +108,7 @@ export default async function HistoryPage({
 
   const [history, hosts, frequency] = await Promise.all([
     getVisitHistory(filters),
-    getHosts(),
+    listHosts(),
     // Always 30 days; the chart's week view slices client-side.
     getVisitorFrequency(30),
   ]);
@@ -109,6 +128,7 @@ export default async function HistoryPage({
     return qs ? `/dashboard/history?${qs}` : "/dashboard/history";
   }
 
+  const filtered = hasActiveFilters(filters);
   const firstRow = history.total === 0 ? 0 : (history.page - 1) * PAGE_SIZE + 1;
   const lastRow = Math.min(history.page * PAGE_SIZE, history.total);
 
@@ -146,39 +166,56 @@ export default async function HistoryPage({
         </p>
 
         <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-200 bg-gray-50 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:border-gray-700 dark:bg-gray-700/50 dark:text-gray-400">
-                  <th scope="col" className="px-4 py-3">
-                    Visitor
-                  </th>
-                  <th scope="col" className="px-4 py-3">
-                    Purpose
-                  </th>
-                  <th scope="col" className="px-4 py-3">
-                    Host
-                  </th>
-                  <th scope="col" className="px-4 py-3">
-                    Check-in
-                  </th>
-                  <th scope="col" className="px-4 py-3">
-                    Check-out
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                {history.visits.length === 0 ? (
-                  <tr>
-                    <td
-                      className="px-4 py-8 text-center text-gray-500 dark:text-gray-400"
-                      colSpan={5}
-                    >
-                      No visit history yet
-                    </td>
+          {history.visits.length === 0 ? (
+            // An empty log and an over-narrow filter look identical in a blank
+            // table but need different next steps, so they are worded apart.
+            filtered ? (
+              <EmptyState
+                icon="🔍"
+                title="No visits match these filters"
+                hint="Try widening the date range, or clearing the host and name filters."
+                action={
+                  <Link
+                    href="/dashboard/history"
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                  >
+                    Clear all filters
+                  </Link>
+                }
+              />
+            ) : (
+              <EmptyState
+                icon="📖"
+                title="No visit history yet"
+                hint="Completed visits are logged here once visitors start checking in."
+              />
+            )
+          ) : (
+            <div className="overflow-x-auto">
+              {/* The min-width makes a narrow screen scroll the table rather
+                  than crushing five columns into unreadable slivers. */}
+              <table className="w-full min-w-[48rem] text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 bg-gray-50 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:border-gray-700 dark:bg-gray-700/50 dark:text-gray-400">
+                    <th scope="col" className="px-4 py-3">
+                      Visitor
+                    </th>
+                    <th scope="col" className="px-4 py-3">
+                      Purpose
+                    </th>
+                    <th scope="col" className="px-4 py-3">
+                      Host
+                    </th>
+                    <th scope="col" className="px-4 py-3">
+                      Check-in
+                    </th>
+                    <th scope="col" className="px-4 py-3">
+                      Check-out
+                    </th>
                   </tr>
-                ) : (
-                  history.visits.map((visit) => (
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                  {history.visits.map((visit) => (
                     <tr
                       key={visit.id}
                       className="transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/40"
@@ -217,11 +254,11 @@ export default async function HistoryPage({
                         <StatusCell visit={visit} />
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         {history.pageCount > 1 && (
@@ -262,8 +299,10 @@ function PageLink({
   disabled: boolean;
   children: React.ReactNode;
 }) {
+  // `py-2` over the old `py-1.5`: these are the one control on the page a guard
+  // taps repeatedly on a phone.
   const className =
-    "rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium shadow-sm dark:border-gray-600";
+    "rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium shadow-sm dark:border-gray-600";
 
   if (disabled) {
     return (

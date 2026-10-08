@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 
-// TEMP: dev-only auth, replace with Better Auth call.
-import { getDevSession } from "@/lib/dev-auth";
+import { getSession } from "@/lib/session";
 import { checkOutVisit } from "@/lib/visits";
 
 /** POST /api/visits/[id]/checkout — stamp `checkOutTime` on an active visit. */
@@ -9,8 +8,7 @@ export async function POST(
   _request: Request,
   context: RouteContext<"/api/visits/[id]/checkout">,
 ) {
-  // TEMP: dev-only auth, replace with Better Auth call.
-  const session = await getDevSession();
+  const session = await getSession();
 
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -19,7 +17,12 @@ export async function POST(
   const { id } = await context.params;
 
   try {
-    const { result, checkOutTime } = await checkOutVisit(id);
+    // The name is copied onto the visit so the audit line survives this
+    // account being removed later.
+    const { result, checkOutTime } = await checkOutVisit(id, {
+      id: session.userId,
+      name: session.name,
+    });
 
     if (result === "not-found") {
       return NextResponse.json({ error: "Visit not found." }, { status: 404 });

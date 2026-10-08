@@ -4,6 +4,12 @@ import { createContext, useCallback, useContext, useEffect, useState } from "rea
 
 type Theme = "light" | "dark";
 
+/**
+ * Reads the same key, with the same default, as the inline script in
+ * `src/app/layout.tsx` that applies the theme before the first paint. The two
+ * must agree: the script owns the class on `<html>`, this owns React's idea of
+ * the theme, and a disagreement shows up as a flash or a hydration mismatch.
+ */
 function getStoredTheme(): Theme {
   if (typeof window === "undefined") return "light";
   const stored = localStorage.getItem("vms-theme");

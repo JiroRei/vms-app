@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { redeemAppointment } from "@/lib/appointments";
+import { clientIp, consumeRateLimit } from "@/lib/rate-limit";
+
+/** As for a walk-in: enough for a queue at the door, not enough for a script. */
+const REDEEM_LIMIT = { window: 60, max: 20 };
 
 /**
  * POST /api/appointments/[reference]/check-in — redeem an appointment.
@@ -9,9 +13,24 @@ import { redeemAppointment } from "@/lib/appointments";
  * Public, like the rest of the kiosk.
  */
 export async function POST(
-  _request: Request,
+  request: Request,
   context: RouteContext<"/api/appointments/[reference]/check-in">,
 ) {
+  const limit = consumeRateLimit(
+    `appointment-check-in:${clientIp(request.headers)}`,
+    REDEEM_LIMIT,
+  );
+
+  if (!limit.allowed) {
+    return NextResponse.json(
+      {
+        error:
+          "Too many check-ins from this terminal just now. Please wait a moment, or ask reception for help.",
+      },
+      { status: 429, headers: { "Retry-After": String(limit.retryAfter) } },
+    );
+  }
+
   const { reference } = await context.params;
 
   try {
