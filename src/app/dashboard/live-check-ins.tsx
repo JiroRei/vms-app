@@ -1,12 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 
+import { useToast } from "@/components/toast";
 import { VisitStatusBadge } from "@/components/visit-status-badge";
+import { TimelineChevron, VisitTimeline } from "@/components/visit-timeline";
 import { VisitorTypeBadge } from "@/components/visitor-type-badge";
+import { formatFullName } from "@/lib/names";
 import type { ActiveVisit } from "@/lib/visits";
 
 const POLL_INTERVAL_MS = 5000;
+
+/** How long a row stays highlighted after its action succeeded. */
+const FLASH_MS = 1600;
 
 /** The three row actions, and the endpoint each one posts to. */
 type VisitAction = "checkout" | "step-out" | "return";
@@ -15,6 +21,13 @@ const ACTION_ERROR: Record<VisitAction, string> = {
   checkout: "Could not check out this visitor.",
   "step-out": "Could not mark this visitor as returning.",
   return: "Could not mark this visitor as returned.",
+};
+
+/** Past-tense confirmation for the toast, built from the visitor's name. */
+const ACTION_DONE: Record<VisitAction, (name: string) => string> = {
+  checkout: (name) => `${name} checked out`,
+  "step-out": (name) => `${name} marked as returning`,
+  return: (name) => `${name} marked as returned`,
 };
 
 function formatTime(iso: string): string {
@@ -29,21 +42,28 @@ export function LiveCheckIns({
 }: {
   initialVisits: ActiveVisit[];
 }) {
+  const showToast = useToast();
+
   const [visits, setVisits] = useState(initialVisits);
   const [pendingIds, setPendingIds] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  /** Only the polling problem lives here; action failures go to a toast. */
+  const [pollError, setPollError] = useState<string | null>(null);
+  /** The row that just changed, highlighted briefly so the change is seen. */
+  const [flashedId, setFlashedId] = useState<string | null>(null);
   /** The visit whose "will they return?" dialog is open, if any. */
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  /** The one row whose timeline is open. One at a time keeps the list short. */
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   // Resolved from the current list rather than held as its own copy of the
   // visit, so a poll that checks the row out from under an open dialog — another
   // guard got there first — closes it on the next render instead of leaving a
   // choice about a row that is gone.
-  const confirming =
-    visits.find((visit) => visit.id === confirmingId) ?? null;
+  const confirming = visits.find((visit) => visit.id === confirmingId) ?? null;
 
   // Guards against overlapping polls when a request outlives the interval.
   const inFlight = useRef(false);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refresh = useCallback(async () => {
     if (inFlight.current) return;
@@ -58,9 +78,9 @@ export function LiveCheckIns({
 
       const data = (await response.json()) as { visits: ActiveVisit[] };
       setVisits(data.visits);
-      setError(null);
+      setPollError(null);
     } catch {
-      setError("Live updates paused — retrying…");
+      setPollError("Live updates paused — retrying…");
     } finally {
       inFlight.current = false;
     }
@@ -88,6 +108,23 @@ export function LiveCheckIns({
     };
   }, [refresh]);
 
+  useEffect(() => {
+    return () => {
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+    };
+  }, []);
+
+  /**
+   * Highlights a row that stayed in the list. A check-out removes its row, so
+   * there is nothing left to flash — its toast carries the confirmation alone.
+   */
+  function flashRow(visitId: string) {
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+
+    setFlashedId(visitId);
+    flashTimer.current = setTimeout(() => setFlashedId(null), FLASH_MS);
+  }
+
   /** Optimistic update so the row responds before the next poll lands. */
   function applyLocally(visitId: string, action: VisitAction) {
     if (action === "checkout") {
@@ -108,6 +145,8 @@ export function LiveCheckIns({
             : { ...visit, status: "ACTIVE", exitTime: null },
       ),
     );
+
+    flashRow(visitId);
   }
 
   async function runAction(visitId: string, action: VisitAction) {
@@ -115,8 +154,13 @@ export function LiveCheckIns({
     // double-submit cannot fire a second request.
     if (pendingIds.includes(visitId)) return;
 
+    // Read the name up front: a check-out drops the row before the toast fires.
+    const target = visits.find((visit) => visit.id === visitId);
+    const visitorName = target
+      ? formatFullName(target.firstName, target.lastName)
+      : "This visitor";
+
     setPendingIds((ids) => [...ids, visitId]);
-    setError(null);
 
     try {
       const response = await fetch(`/api/visits/${visitId}/${action}`, {
@@ -125,6 +169,7 @@ export function LiveCheckIns({
 
       if (response.ok) {
         applyLocally(visitId, action);
+        showToast(ACTION_DONE[action](visitorName));
       } else if (response.status === 409 || response.status === 404) {
         // The row already moved on server-side — a double-click, or another
         // guard. Checking out means it is gone either way; the other two are
@@ -132,12 +177,17 @@ export function LiveCheckIns({
         if (action === "checkout") {
           setVisits((current) => current.filter((v) => v.id !== visitId));
         }
+
+        showToast("Someone already updated this visit.", "error");
       } else {
         const data = await response.json().catch(() => null);
-        setError(data?.error ?? ACTION_ERROR[action]);
+        showToast(data?.error ?? ACTION_ERROR[action], "error");
       }
     } catch {
-      setError(`Network problem — ${ACTION_ERROR[action].toLowerCase()}`);
+      showToast(
+        `Network problem — ${ACTION_ERROR[action].toLowerCase()}`,
+        "error",
+      );
     } finally {
       setPendingIds((ids) => ids.filter((id) => id !== visitId));
       // Reconcile with the server regardless of which branch we took.
@@ -153,8 +203,23 @@ export function LiveCheckIns({
       return;
     }
 
-    setError(null);
     setConfirmingId(visit.id);
+  }
+
+  function toggleExpanded(visitId: string) {
+    setExpandedId((current) => (current === visitId ? null : visitId));
+  }
+
+  /**
+   * Clicking anywhere in a row opens its timeline, except on the controls that
+   * own their own clicks — the row is a much bigger target than the chevron.
+   */
+  function onRowClick(event: React.MouseEvent<HTMLTableRowElement>, id: string) {
+    if ((event.target as HTMLElement).closest("button, a, input, select")) {
+      return;
+    }
+
+    toggleExpanded(id);
   }
 
   function resolveDialog(action: Extract<VisitAction, "checkout" | "step-out">) {
@@ -187,137 +252,212 @@ export function LiveCheckIns({
           )}
         </p>
 
-        {error ? (
+        {pollError ? (
           <span
             role="status"
             className="text-xs font-medium text-amber-600 dark:text-amber-400"
           >
-            {error}
+            {pollError}
           </span>
         ) : (
           <span className="flex items-center gap-1.5 text-xs font-medium text-gray-400 dark:text-gray-500">
-            <span
-              className="h-1.5 w-1.5 rounded-full bg-green-500"
-              aria-hidden
-            />
+            <span className="h-1.5 w-1.5 rounded-full bg-green-500" aria-hidden />
             Live
           </span>
         )}
       </div>
 
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-200 bg-gray-50 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:border-gray-700 dark:bg-gray-700/50 dark:text-gray-400">
-                <th scope="col" className="px-4 py-3">
-                  Visitor
-                </th>
-                <th scope="col" className="px-4 py-3">
-                  Purpose
-                </th>
-                <th scope="col" className="px-4 py-3">
-                  Host
-                </th>
-                <th scope="col" className="px-4 py-3">
-                  Checked In
-                </th>
-                <th scope="col" className="px-4 py-3 text-right">
-                  Action
-                </th>
+        {/*
+          `table-fixed` with widths on the headers, and no horizontal scroll
+          container: name, status and check-in time stay readable at any width.
+          Purpose and host are the ones that give way — they truncate behind a
+          tooltip, and drop out entirely on narrow screens, where they reappear
+          as a secondary line under the name instead.
+        */}
+        <table className="w-full table-fixed text-sm">
+          <thead>
+            <tr className="border-b border-gray-200 bg-gray-50 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:border-gray-700 dark:bg-gray-700/50 dark:text-gray-400">
+              <th scope="col" className="w-[40%] px-4 py-3 sm:w-[34%] lg:w-[26%]">
+                Visitor
+              </th>
+              <th
+                scope="col"
+                className="hidden px-4 py-3 md:table-cell md:w-[20%]"
+              >
+                Purpose
+              </th>
+              <th
+                scope="col"
+                className="hidden px-4 py-3 lg:table-cell lg:w-[18%]"
+              >
+                Host
+              </th>
+              <th scope="col" className="w-[26%] px-4 py-3 sm:w-[20%] md:w-[14%]">
+                Checked In
+              </th>
+              <th
+                scope="col"
+                className="w-[34%] px-4 py-3 text-right sm:w-[26%] md:w-[22%]"
+              >
+                Action
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+            {visits.length === 0 ? (
+              <tr>
+                <td
+                  className="px-4 py-8 text-center text-gray-500 dark:text-gray-400"
+                  colSpan={5}
+                >
+                  No active check-ins
+                </td>
               </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-              {visits.length === 0 ? (
-                <tr>
-                  <td
-                    className="px-4 py-8 text-center text-gray-500 dark:text-gray-400"
-                    colSpan={5}
-                  >
-                    No active check-ins
-                  </td>
-                </tr>
-              ) : (
-                visits.map((visit) => {
-                  const pending = pendingIds.includes(visit.id);
-                  const isReturning = visit.status === "PENDING_RETURN";
+            ) : (
+              visits.map((visit) => {
+                const pending = pendingIds.includes(visit.id);
+                const isReturning = visit.status === "PENDING_RETURN";
+                const flashed = flashedId === visit.id;
+                const expanded = expandedId === visit.id;
+                // A visit with no purpose is possible — a delivery logged
+                // while the "Delivery" option was missing, or a legacy row.
+                const purposeLabel = visit.purposeLabel ?? "—";
+                const hostLabel = visit.hostName
+                  ? `${visit.hostName} · ${visit.hostDepartment}`
+                  : "Reception";
 
-                  return (
-                    <tr
-                      key={visit.id}
-                      className={`transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/40 ${
-                        isReturning ? "bg-amber-50/40 dark:bg-amber-500/5" : ""
-                      }`}
-                    >
-                      <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">
-                        {visit.visitorName}
+                return (
+                  <Fragment key={visit.id}>
+                  <tr
+                    onClick={(event) => onRowClick(event, visit.id)}
+                    className={`cursor-pointer transition-colors duration-500 ${
+                      flashed
+                        ? "bg-green-50 dark:bg-green-500/10"
+                        : isReturning
+                          ? "bg-amber-50/40 hover:bg-gray-50 dark:bg-amber-500/5 dark:hover:bg-gray-700/40"
+                          : "hover:bg-gray-50 dark:hover:bg-gray-700/40"
+                    }`}
+                  >
+                    <td className="px-4 py-3 align-top">
+                      <div className="flex flex-wrap items-center gap-y-1">
+                        <button
+                          type="button"
+                          onClick={() => toggleExpanded(visit.id)}
+                          aria-expanded={expanded}
+                          aria-controls={`timeline-${visit.id}`}
+                          title={formatFullName(visit.firstName, visit.lastName)}
+                          className="flex min-w-0 max-w-full items-center gap-1 text-left font-medium text-gray-900 hover:underline dark:text-white"
+                        >
+                          <TimelineChevron open={expanded} />
+                          <span className="truncate">{formatFullName(visit.firstName, visit.lastName)}</span>
+                        </button>
                         <VisitorTypeBadge type={visit.visitorType} />
                         <VisitStatusBadge status={visit.status} />
-                      </td>
-                      <td className="px-4 py-3 text-gray-600 dark:text-gray-300">
-                        {visit.purpose}
-                      </td>
-                      <td className="px-4 py-3">
-                        {visit.hostName ? (
-                          <>
-                            <div className="text-gray-900 dark:text-white">
-                              {visit.hostName}
-                            </div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400">
-                              {visit.hostDepartment}
-                            </div>
-                          </>
-                        ) : (
-                          // A delivery can arrive without a named recipient.
-                          <span className="text-gray-400 dark:text-gray-500">
-                            Reception
-                          </span>
-                        )}
-                      </td>
-                      <td
-                        className="px-4 py-3 tabular-nums text-gray-600 dark:text-gray-300"
-                        // Server and browser can sit in different time zones.
-                        suppressHydrationWarning
-                      >
-                        {formatTime(visit.checkInTime)}
-                        {isReturning && visit.exitTime && (
-                          <div className="text-xs font-medium text-amber-700 dark:text-amber-400">
-                            Out since {formatTime(visit.exitTime)}
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex justify-end gap-2">
-                          {isReturning && (
-                            <button
-                              type="button"
-                              onClick={() => runAction(visit.id, "return")}
-                              disabled={pending}
-                              className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:bg-amber-500/20"
-                            >
-                              {pending ? "Working…" : "Mark as returned"}
-                            </button>
-                          )}
+                      </div>
 
+                      {/* Stand-in for the two columns hidden at this width. */}
+                      <div
+                        className="mt-1 truncate text-xs text-gray-500 lg:hidden dark:text-gray-400"
+                        title={`${purposeLabel} · ${hostLabel}`}
+                      >
+                        <span className="md:hidden">{purposeLabel} · </span>
+                        {hostLabel}
+                      </div>
+                    </td>
+
+                    <td
+                      className="hidden truncate px-4 py-3 align-top text-gray-600 md:table-cell dark:text-gray-300"
+                      title={purposeLabel}
+                    >
+                      {purposeLabel}
+                    </td>
+
+                    <td
+                      className="hidden px-4 py-3 align-top lg:table-cell"
+                      title={hostLabel}
+                    >
+                      {visit.hostName ? (
+                        <>
+                          <div className="truncate text-gray-900 dark:text-white">
+                            {visit.hostName}
+                          </div>
+                          <div className="truncate text-xs text-gray-500 dark:text-gray-400">
+                            {visit.hostDepartment}
+                          </div>
+                        </>
+                      ) : (
+                        // Only a legacy delivery row from the retired kiosk
+                        // flow can still be sitting here without a host.
+                        <span className="text-gray-400 dark:text-gray-500">
+                          Reception
+                        </span>
+                      )}
+                    </td>
+
+                    <td
+                      className="px-4 py-3 align-top tabular-nums text-gray-600 dark:text-gray-300"
+                      // Server and browser can sit in different time zones.
+                      suppressHydrationWarning
+                    >
+                      {formatTime(visit.checkInTime)}
+                      {isReturning && visit.exitTime && (
+                        <div className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                          Out since {formatTime(visit.exitTime)}
+                        </div>
+                      )}
+                    </td>
+
+                    <td className="px-4 py-3 align-top">
+                      <div className="flex flex-wrap justify-end gap-2">
+                        {isReturning && (
                           <button
                             type="button"
-                            onClick={() => confirmCheckOut(visit)}
+                            onClick={() => runAction(visit.id, "return")}
                             disabled={pending}
-                            className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 transition-colors hover:border-gray-400 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+                            className="min-h-11 rounded-lg border border-amber-300 bg-amber-50 px-4 text-sm font-semibold text-amber-800 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:bg-amber-500/20"
                           >
-                            {pending && !isReturning
-                              ? "Checking out…"
-                              : "Check out"}
+                            {pending ? "Working…" : "Mark as returned"}
                           </button>
-                        </div>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => confirmCheckOut(visit)}
+                          disabled={pending}
+                          className="min-h-11 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-blue-300 dark:disabled:bg-blue-900"
+                        >
+                          {pending && !isReturning
+                            ? "Checking out…"
+                            : "Check out"}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+
+                  {expanded && (
+                    <tr className="bg-gray-50 dark:bg-gray-900/40">
+                      <td
+                        id={`timeline-${visit.id}`}
+                        colSpan={5}
+                        className="px-4 py-4 pl-9"
+                      >
+                        {/* Keyed on status so stepping someone out or marking
+                            them back re-fetches instead of leaving the panel
+                            showing the timeline from a moment ago. */}
+                        <VisitTimeline
+                          visitId={visit.id}
+                          refreshKey={visit.status}
+                        />
                       </td>
                     </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+                  )}
+                  </Fragment>
+                );
+              })
+            )}
+          </tbody>
+        </table>
       </div>
 
       {confirming && (
@@ -336,7 +476,7 @@ export function LiveCheckIns({
                 Will this visitor return later today?
               </h2>
               <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-                {confirming.visitorName} is on their way out. Marking them as
+                {formatFullName(confirming.firstName, confirming.lastName)} is on their way out. Marking them as
                 returning keeps this visit open, so they resume it when they get
                 back instead of checking in again.
               </p>
@@ -346,21 +486,21 @@ export function LiveCheckIns({
               <button
                 type="button"
                 onClick={() => setConfirmingId(null)}
-                className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                className="min-h-11 rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={() => resolveDialog("step-out")}
-                className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-semibold text-amber-800 shadow-sm transition-colors hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:bg-amber-500/20"
+                className="min-h-11 rounded-lg border border-amber-300 bg-amber-50 px-4 text-sm font-semibold text-amber-800 shadow-sm transition-colors hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:bg-amber-500/20"
               >
                 Yes, mark as returning
               </button>
               <button
                 type="button"
                 onClick={() => resolveDialog("checkout")}
-                className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-500"
+                className="min-h-11 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-500"
               >
                 No, check out
               </button>

@@ -21,6 +21,28 @@ enum VisitorType {
   DELIVERY
 }
 
+/// Where an appointment sits between being booked and being used. Replaces the
+/// original `used` boolean, which could only say "redeemed or not" — the two
+/// dead ends a kiosk has to explain, cancelled and expired, looked identical to
+/// a reference number that was never issued.
+enum AppointmentStatus {
+  PENDING
+  CHECKED_IN
+  CANCELLED
+  EXPIRED
+}
+
+/// One entry in a visit's own timeline. These are append-only and describe what
+/// happened, whereas `VisitStatus` describes where the visit ended up — a visit
+/// that stepped out and came back is ACTIVE again, but still carries its
+/// STEP_OUT and RETURN events.
+enum VisitEventType {
+  CHECK_IN
+  STEP_OUT
+  RETURN
+  CHECK_OUT
+}
+
 /// Where a visit sits in its lifecycle. PENDING_RETURN is the middle state: the
 /// visitor has stepped out but is expected back the same day, so the visit is
 /// still open (`checkOutTime` stays null) and resumes rather than restarting.
@@ -55,6 +77,9 @@ model User {
   sessions Session[]
   accounts Account[]
 
+  /// Visits this user checked in on a visitor's behalf.
+  checkedInVisits Visit[]
+
   @@map("user")
 }
 
@@ -69,10 +94,42 @@ model Host {
   @@map("host")
 }
 
+// TODO(multi-tenancy): add organizationId FK here and scope all queries below by it once multi-tenancy is implemented.
+/// The admin-configurable list behind every "purpose of visit" dropdown.
+///
+/// Options are retired with `isActive` rather than deleted, because historical
+/// visits still point at them and a visit from last year must keep reading the
+/// way it was recorded. `onDelete: Restrict` on both relations backs that up: an
+/// option that anything references cannot be removed even by hand.
+model PurposeOption {
+  id        String   @id @default(cuid())
+  label     String   @unique
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  visitors     Visitor[]
+  appointments Appointment[]
+
+  /// Every dropdown asks the same question: active options, in display order.
+  @@index([isActive, sortOrder])
+  @@map("purpose_option")
+}
+
 model Visitor {
-  id      String @id @default(cuid())
-  name    String
-  purpose String
+  id String @id @default(cuid())
+
+  /// Name parts as typed (trimmed, whitespace collapsed, casing kept). Display
+  /// through `formatFullName()`. `lastName` may be empty: single-word legacy
+  /// names were backfilled that way, and a DELIVERY row keeps the courier or
+  /// company name whole in `firstName`.
+  firstName String
+  lastName  String
+
+  /// Nullable so a delivery — which collects no purpose from anyone — and any
+  /// future edge case can stand without one. Guests always carry one.
+  purposeId String?
+  purpose   PurposeOption? @relation(fields: [purposeId], references: [id], onDelete: Restrict)
 
   /// GUEST covers walk-ins and appointments; DELIVERY is a courier drop-off.
   /// Defaults to GUEST so rows created before this column existed stay correct.
@@ -83,11 +140,21 @@ model Visitor {
   hostId String?
   host   Host?   @relation(fields: [hostId], references: [id], onDelete: Cascade)
 
+  /// Where a delivery is headed when that is not one of the known hosts — the
+  /// guard typed it instead of picking from the list. Mutually exclusive with
+  /// `hostId` in practice, and always null for a guest.
+  recipientDepartment String?
+
+  /// Short free-text note the guard added while logging a delivery ("left at
+  /// the front desk"). Null for guests, and for deliveries logged without one.
+  note String?
+
   visits Visit[]
 
   createdAt DateTime @default(now())
 
   @@index([hostId])
+  @@index([purposeId])
   @@map("visitor")
 }
 
@@ -109,12 +176,46 @@ model Visit {
   /// check-out ends it. Cleared again when they are marked as returned.
   exitTime DateTime?
 
+  /// The guard who performed this check-in, when a guard did. Null means the
+  /// visitor checked themselves in at the kiosk, so the presence of a user here
+  /// is exactly what separates guard-assisted arrivals from self-service ones.
+  checkedInBy     String?
+  checkedInByUser User?   @relation(fields: [checkedInBy], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
 
+  events VisitEvent[]
+
   @@index([visitorId])
+  @@index([checkedInBy])
   @@index([checkOutTime])
   @@index([status])
   @@map("visit")
+}
+
+/// An append-only log of what happened during one visit, written in the same
+/// transaction as the state change it describes.
+///
+/// Deliberately scoped to a single visit: there is no visitor identity across
+/// visits to hang a wider history off yet, and `visitId` is the only thing this
+/// needs to know. Nothing reads or writes these rows except the timeline.
+model VisitEvent {
+  id String @id @default(cuid())
+
+  visitId String
+  visit   Visit  @relation(fields: [visitId], references: [id], onDelete: Cascade)
+
+  eventType VisitEventType
+
+  /// The moment the event happened, which is the state change's own timestamp
+  /// rather than the moment the row was written — they are the same instant for
+  /// a live action, but the backfill sets this from the visit it reconstructs.
+  timestamp DateTime @default(now())
+
+  /// Reads are always "this visit's events, oldest first", so the index covers
+  /// the filter and the sort together.
+  @@index([visitId, timestamp])
+  @@map("visit_event")
 }
 
 /// A pre-registered visit, looked up at the kiosk by `referenceNumber`.
@@ -123,22 +224,121 @@ model Visit {
 /// QR code. Adding `qrToken String? @unique` and `expiresAt DateTime?` later is
 /// additive — nothing here assumes the reference number is the only lookup key.
 model Appointment {
-  id              String @id @default(cuid())
+  id String @id @default(cuid())
+
+  /// Short and human-readable, typed on a kiosk keypad. This is the fallback
+  /// path: printouts crease, cameras fail, and a visitor can read this one down
+  /// a phone line.
   referenceNumber String @unique
-  visitorName     String
-  purpose         String
+
+  /// What the QR code actually encodes. A random uuid rather than the row's own
+  /// id, so a photographed code leaks nothing about the table and guessing an
+  /// id gets you nowhere.
+  qrToken String @unique
+
+  /// The visitor's name, split as on `Visitor`.
+  firstName    String
+  lastName     String
+  /// Required: this is where the QR code is sent, so an appointment without one
+  /// could not have been delivered.
+  visitorEmail String
+  visitorPhone String?
+
+  /// Nullable for the same reason as `Visitor.purposeId`, and so an option can
+  /// never be blocked from retirement by a booking that predates the list.
+  purposeId String?
+  purpose   PurposeOption? @relation(fields: [purposeId], references: [id], onDelete: Restrict)
 
   hostId String
   host   Host   @relation(fields: [hostId], references: [id], onDelete: Cascade)
 
-  /// Set once the appointment has been redeemed at the kiosk. A reference
-  /// number is single-use, so this is what makes a second attempt fail.
-  used Boolean @default(false)
+  /// When the visitor is expected.
+  scheduledFor DateTime
+
+  /// When the code stops working, set at booking to `scheduledFor` plus the
+  /// grace window in `src/lib/qr.ts`. Stored rather than computed so changing
+  /// that window later cannot retroactively reopen appointments that already
+  /// lapsed.
+  expiresAt DateTime
+
+  status AppointmentStatus @default(PENDING)
+
+  /// The returning-visitor profile this booking belongs to. Set only when the
+  /// visitor proved they own the email (code verification), or when the
+  /// booking created the profile itself. An unverified booking against an
+  /// email that already has a profile stays unlinked, so nobody can attach
+  /// visits to someone else's record just by typing their address.
+  visitorProfileId String?
+  visitorProfile   VisitorProfile? @relation(fields: [visitorProfileId], references: [id], onDelete: SetNull)
+
+  /// When the visitor ticked the privacy consent box. Nullable only because
+  /// bookings made before consent was collected have no such moment; the
+  /// booking API refuses new bookings without it.
+  consentAcceptedAt DateTime?
 
   createdAt DateTime @default(now())
 
   @@index([hostId])
+  @@index([status])
+  @@index([purposeId])
+  @@index([visitorProfileId])
   @@map("appointment")
+}
+
+/// A person who books visits, identified by email across bookings. Powers the
+/// "I've been here before" prefill on the public booking page.
+///
+/// Deliberately minimal and separate from `Visitor`/`Visit`, which stay
+/// per-visit; joining the two is a later identity refactor.
+model VisitorProfile {
+  id    String  @id @default(cuid())
+  firstName String
+  lastName  String
+  /// `makeNameKey(firstName, lastName)`: lower-cased, accent-stripped,
+  /// whitespace-collapsed, joined with "|". Written alongside the name, never
+  /// edited on its own.
+  nameKey   String
+  /// Stored lower-cased and trimmed, so lookups match however it was typed.
+  /// Not unique on its own: a family or a shared work inbox can hold several
+  /// people, each their own profile, told apart by name.
+  email String
+  phone String?
+
+  createdAt DateTime @default(now())
+
+  appointments Appointment[]
+
+  @@unique([email, nameKey])
+  @@map("visitor_profile")
+}
+
+/// A one-time code emailed to prove ownership of an address before the
+/// booking page reveals a stored profile.
+///
+/// Only an HMAC of the code is stored. A row is written for every lookup,
+/// including emails with no profile (whose code is never sent), so the
+/// per-email rate limit behaves identically either way and cannot be used to
+/// discover who has visited.
+model VisitorVerification {
+  id         String    @id @default(cuid())
+  /// Lower-cased and trimmed, matching `VisitorProfile.email`.
+  email      String
+  /// The name the code was requested for: a code proves this exact
+  /// email + name pair and nothing else at that address.
+  nameKey    String
+  codeHash   String
+  expiresAt  DateTime
+  attempts   Int       @default(0)
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  /// Rate limiting counts per email, across names.
+  @@index([email, createdAt])
+  /// "Latest code for this email + name".
+  @@index([email, nameKey, createdAt])
+  /// Pruning old rows.
+  @@index([createdAt])
+  @@map("visitor_verification")
 }
 
 // ---------------------------------------------------------------------------

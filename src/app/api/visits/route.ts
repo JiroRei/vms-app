@@ -1,11 +1,9 @@
 import { NextResponse } from "next/server";
 
+import { parseNameParts } from "@/lib/names";
 import { prisma } from "@/lib/prisma";
-import {
-  createDeliveryVisit,
-  createWalkInVisit,
-  getActiveVisits,
-} from "@/lib/visits";
+import { findSelectablePurpose } from "@/lib/purposes";
+import { createWalkInVisit, getActiveVisits } from "@/lib/visits";
 // TEMP: dev-only auth, replace with Better Auth call.
 import { getDevSession } from "@/lib/dev-auth";
 
@@ -36,13 +34,11 @@ export async function GET() {
 }
 
 /**
- * POST /api/visits — check someone in at the kiosk.
- *
- * `type` selects the flow: "GUEST" (default) is a walk-in and needs a purpose
- * and a host; "DELIVERY" is a courier drop-off and needs only a name, since the
- * recipient department is optional.
+ * POST /api/visits — check a walk-in visitor in at the kiosk.
  *
  * Deliberately unauthenticated: the kiosk is a public, unattended terminal.
+ * That is also why deliveries are not accepted here — a courier drop-off is
+ * logged by a guard through `POST /api/deliveries`, which requires a session.
  */
 export async function POST(request: Request) {
   let body: unknown;
@@ -53,70 +49,59 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const { name, purpose, hostId, type } = (body ?? {}) as Record<
-    string,
-    unknown
-  >;
+  const fields = (body ?? {}) as Record<string, unknown>;
+  const { purposeId, hostId } = fields;
 
-  const isDelivery = type === "DELIVERY";
-  const trimmedName = typeof name === "string" ? name.trim() : "";
-  const trimmedPurpose = typeof purpose === "string" ? purpose.trim() : "";
+  const name = parseNameParts(fields);
+  const selectedPurposeId = typeof purposeId === "string" ? purposeId : "";
   const selectedHostId = typeof hostId === "string" ? hostId : "";
 
-  const fieldErrors: Record<string, string> = {};
+  const fieldErrors: Record<string, string> = name.ok ? {} : { ...name.errors };
 
-  if (!trimmedName) {
-    fieldErrors.name = isDelivery
-      ? "Please enter the courier or company name."
-      : "Please enter your name.";
+  if (!selectedPurposeId) {
+    fieldErrors.purposeId = "Please choose your purpose of visit.";
   }
 
-  if (!isDelivery) {
-    if (!trimmedPurpose) {
-      fieldErrors.purpose = "Please enter your purpose of visit.";
-    }
-    if (!selectedHostId) {
-      fieldErrors.hostId = "Please select who you are here to see.";
-    }
+  if (!selectedHostId) {
+    fieldErrors.hostId = "Please select who you are here to see.";
   }
 
-  if (Object.keys(fieldErrors).length > 0) {
+  if (!name.ok || Object.keys(fieldErrors).length > 0) {
     return NextResponse.json({ fieldErrors }, { status: 400 });
   }
 
   try {
-    // Checked up front so an unknown host is a 400 rather than a foreign-key 500.
-    // A delivery may legitimately arrive without one.
-    if (selectedHostId) {
-      const host = await prisma.host.findUnique({
+    // Both checked up front so an unknown id is a 400 rather than a
+    // foreign-key 500. The purpose check also rejects a retired option, which a
+    // kiosk page rendered before the admin retired it would still be offering.
+    const [host, purpose] = await Promise.all([
+      prisma.host.findUnique({
         where: { id: selectedHostId },
         select: { id: true },
-      });
+      }),
+      findSelectablePurpose(selectedPurposeId),
+    ]);
 
-      if (!host) {
-        return NextResponse.json(
-          {
-            fieldErrors: {
-              hostId: isDelivery
-                ? "That department is no longer available."
-                : "That host is no longer available.",
-            },
-          },
-          { status: 400 },
-        );
-      }
+    if (!host) {
+      return NextResponse.json(
+        { fieldErrors: { hostId: "That host is no longer available." } },
+        { status: 400 },
+      );
     }
 
-    const created = isDelivery
-      ? await createDeliveryVisit({
-          name: trimmedName,
-          hostId: selectedHostId || null,
-        })
-      : await createWalkInVisit({
-          name: trimmedName,
-          purpose: trimmedPurpose,
-          hostId: selectedHostId,
-        });
+    if (!purpose) {
+      return NextResponse.json(
+        { fieldErrors: { purposeId: "That purpose is no longer available." } },
+        { status: 400 },
+      );
+    }
+
+    const created = await createWalkInVisit({
+      firstName: name.firstName,
+      lastName: name.lastName,
+      purposeId: purpose.id,
+      hostId: selectedHostId,
+    });
 
     return NextResponse.json(created, { status: 201 });
   } catch (error) {

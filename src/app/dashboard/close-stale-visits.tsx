@@ -3,20 +3,19 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { useToast } from "@/components/toast";
+
 type Stage = "idle" | "confirming" | "working";
 
 export function CloseStaleVisits() {
   const router = useRouter();
+  const showToast = useToast();
 
   const [stage, setStage] = useState<Stage>("idle");
   const [staleCount, setStaleCount] = useState<number | null>(null);
-  const [summary, setSummary] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   /** Counts first, so the dialog can name a number instead of asking blind. */
   async function openDialog() {
-    setError(null);
-    setSummary(null);
     setStaleCount(null);
     setStage("confirming");
 
@@ -32,14 +31,13 @@ export function CloseStaleVisits() {
       const data = (await response.json()) as { staleCount: number };
       setStaleCount(data.staleCount);
     } catch {
-      setError("Could not check for stale visits.");
+      showToast("Could not check for stale visits.", "error");
       setStage("idle");
     }
   }
 
   async function confirm() {
     setStage("working");
-    setError(null);
 
     try {
       const response = await fetch("/api/visits/close-stale", {
@@ -49,13 +47,13 @@ export function CloseStaleVisits() {
       const data = await response.json().catch(() => null);
 
       if (!response.ok) {
-        setError(data?.error ?? "Could not close stale visits.");
+        showToast(data?.error ?? "Could not close stale visits.", "error");
         setStage("idle");
         return;
       }
 
       const closed = data.closed as number;
-      setSummary(
+      showToast(
         closed === 0
           ? "No stale visits to close."
           : `Closed ${closed} stale ${closed === 1 ? "visit" : "visits"}.`,
@@ -64,36 +62,21 @@ export function CloseStaleVisits() {
       // Drop the closed rows out of the live list.
       router.refresh();
     } catch {
-      setError("Network problem — could not close stale visits.");
+      showToast("Network problem — could not close stale visits.", "error");
       setStage("idle");
     }
   }
 
   return (
-    <div className="flex flex-col items-end gap-2">
+    <>
       <button
         type="button"
         onClick={openDialog}
         disabled={stage !== "idle"}
-        className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+        className="min-h-11 rounded-lg border border-gray-300 bg-white px-4 text-sm font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
       >
         Close all stale visits
       </button>
-
-      {summary && (
-        <p
-          role="status"
-          className="text-xs font-medium text-green-700 dark:text-green-400"
-        >
-          {summary}
-        </p>
-      )}
-
-      {error && (
-        <p role="alert" className="text-xs font-medium text-red-600 dark:text-red-400">
-          {error}
-        </p>
-      )}
 
       {(stage === "confirming" || stage === "working") && (
         <div
@@ -127,7 +110,7 @@ export function CloseStaleVisits() {
                 type="button"
                 onClick={() => setStage("idle")}
                 disabled={stage === "working"}
-                className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                className="min-h-11 rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
               >
                 Cancel
               </button>
@@ -135,7 +118,7 @@ export function CloseStaleVisits() {
                 type="button"
                 onClick={confirm}
                 disabled={stage === "working" || !staleCount}
-                className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-blue-300"
+                className="min-h-11 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-blue-300"
               >
                 {stage === "working" ? "Closing…" : "Close them"}
               </button>
@@ -143,6 +126,6 @@ export function CloseStaleVisits() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

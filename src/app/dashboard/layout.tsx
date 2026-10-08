@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { ThemeToggle } from "@/components/theme-toggle";
+import { ToastProvider } from "@/components/toast";
 import { signOut } from "@/app/login/actions";
 import { getDevSession } from "@/lib/dev-auth";
 
@@ -37,11 +38,27 @@ export default async function DashboardLayout({
             Live Check-ins
           </Link>
           <Link
+            href="/dashboard/scan"
+            className="block rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            Scan QR
+          </Link>
+          <Link
             href="/dashboard/history"
             className="block rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
           >
             Visit History
           </Link>
+
+          {/* Admin-only, and the page redirects a guard who reaches it anyway. */}
+          {session.role === "ADMIN" && (
+            <Link
+              href="/dashboard/settings/purposes"
+              className="block rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+            >
+              Purpose Options
+            </Link>
+          )}
         </nav>
         <div className="mt-6 space-y-3 border-t border-gray-200 pt-4 dark:border-gray-700">
           <div>
@@ -81,6 +98,12 @@ export default async function DashboardLayout({
                 Live
               </Link>
               <Link
+                href="/dashboard/scan"
+                className="text-sm font-medium text-gray-700 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
+              >
+                Scan
+              </Link>
+              <Link
                 href="/dashboard/history"
                 className="text-sm font-medium text-gray-700 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
               >
@@ -90,7 +113,11 @@ export default async function DashboardLayout({
             <ThemeToggle />
           </div>
         </header>
-        <main className="flex-1 p-6">{children}</main>
+        {/* Every dashboard action confirms itself through this, so it wraps
+            the whole subtree rather than any one page. */}
+        <ToastProvider>
+          <main className="flex-1 p-6">{children}</main>
+        </ToastProvider>
       </div>
     </div>
   );

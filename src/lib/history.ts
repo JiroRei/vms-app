@@ -9,12 +9,19 @@ export const PAGE_SIZE = 25;
 
 export type HistoryVisit = {
   id: string;
-  visitorName: string;
+  /** Display with `formatFullName()`. */
+  firstName: string;
+  lastName: string;
   visitorType: VisitorType;
-  purpose: string;
-  /** Null for a delivery logged without a named recipient. */
+  /** The chosen option's label. Null if the visit carries no purpose at all. */
+  purposeLabel: string | null;
+  /** Null when no host was picked — every delivery, and nothing else. */
   hostName: string | null;
   hostDepartment: string | null;
+  /** The typed-in destination for a delivery whose recipient is not a host. */
+  recipientDepartment: string | null;
+  /** The guard's note from the delivery modal, when they left one. */
+  note: string | null;
   checkInTime: string;
   checkOutTime: string | null;
   /**
@@ -63,12 +70,47 @@ function parseDateBoundary(value: string, edge: "start" | "end"): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+/**
+ * Case-insensitive substring match against a visitor's first name, last name,
+ * or the full "first last" text.
+ *
+ * The full text is never stored, so a query that spans the gap between the two
+ * parts ("ada love", "n smi") is matched piecewise: for each space in the
+ * query, the part before it must end the first name and the part after it must
+ * start the last name. Together with plain `contains` on each part, that is
+ * exactly "the query appears somewhere in `first last`".
+ */
+export function nameSearchWhere(query: string): Prisma.VisitorWhereInput {
+  const q = query.trim().replace(/\s+/g, " ");
+  const mode = "insensitive" as const;
+
+  const spans: Prisma.VisitorWhereInput[] = [];
+  for (let at = q.indexOf(" "); at !== -1; at = q.indexOf(" ", at + 1)) {
+    const before = q.slice(0, at);
+    const after = q.slice(at + 1);
+    spans.push({
+      AND: [
+        before ? { firstName: { endsWith: before, mode } } : {},
+        after ? { lastName: { startsWith: after, mode } } : {},
+      ],
+    });
+  }
+
+  return {
+    OR: [
+      { firstName: { contains: q, mode } },
+      { lastName: { contains: q, mode } },
+      ...spans,
+    ],
+  };
+}
+
 function buildWhere(filters: HistoryFilters): Prisma.VisitWhereInput {
   const where: Prisma.VisitWhereInput = {};
   const visitor: Prisma.VisitorWhereInput = {};
 
   if (filters.search.trim()) {
-    visitor.name = { contains: filters.search.trim(), mode: "insensitive" };
+    Object.assign(visitor, nameSearchWhere(filters.search));
   }
 
   if (filters.hostId) {
@@ -111,7 +153,7 @@ export async function getVisitHistory(
     orderBy: { checkInTime: "desc" },
     skip: (page - 1) * PAGE_SIZE,
     take: PAGE_SIZE,
-    include: { visitor: { include: { host: true } } },
+    include: { visitor: { include: { host: true, purpose: true } } },
   });
 
   return {
@@ -120,11 +162,14 @@ export async function getVisitHistory(
     pageCount,
     visits: visits.map((visit) => ({
       id: visit.id,
-      visitorName: visit.visitor.name,
+      firstName: visit.visitor.firstName,
+      lastName: visit.visitor.lastName,
       visitorType: visit.visitor.type,
-      purpose: visit.visitor.purpose,
+      purposeLabel: visit.visitor.purpose?.label ?? null,
       hostName: visit.visitor.host?.name ?? null,
       hostDepartment: visit.visitor.host?.department ?? null,
+      recipientDepartment: visit.visitor.recipientDepartment,
+      note: visit.visitor.note,
       checkInTime: visit.checkInTime.toISOString(),
       checkOutTime: visit.checkOutTime?.toISOString() ?? null,
       status: visit.status,

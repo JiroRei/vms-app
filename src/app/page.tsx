@@ -12,10 +12,16 @@ export default function Home() {
         </p>
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
           <Link
-            href="/kiosk"
+            href="/check-in"
             className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-8 py-4 text-lg font-semibold text-white shadow-sm hover:bg-blue-500 transition-colors"
           >
             Kiosk Check-in
+          </Link>
+          <Link
+            href="/appointment-booking"
+            className="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-8 py-4 text-lg font-semibold text-gray-700 shadow-sm hover:bg-gray-50 transition-colors"
+          >
+            Book an appointment
           </Link>
           <Link
             href="/login"

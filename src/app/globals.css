@@ -5,11 +5,23 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+
+  /* The one brand accent. Change --accent alone to re-theme every page that
+     uses the accent-* utilities; the other shades are derived from it. Keep it
+     dark enough for white text (this teal is ~5.5:1). */
+  --accent: #0f766e;
+  --accent-hover: color-mix(in oklab, var(--accent) 85%, black);
+  --accent-soft: color-mix(in oklab, var(--accent) 10%, white);
+  --accent-foreground: #ffffff;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-foreground: var(--accent-foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
