@@ -2,7 +2,11 @@ import "server-only";
 
 import type { Prisma } from "@/generated/prisma/client";
 import type { VisitStatus, VisitorType } from "@/generated/prisma/enums";
-import { startOfLocalDay, toLocalDateKey } from "@/lib/dates";
+import {
+  formatShortDate,
+  startOfLocalDay,
+  toLocalDateKey,
+} from "@/lib/dates";
 import { prisma } from "@/lib/prisma";
 
 export const PAGE_SIZE = 25;
@@ -31,6 +35,14 @@ export type HistoryVisit = {
    * that state right now reports PENDING_RETURN.
    */
   status: VisitStatus;
+  /**
+   * Who closed the visit, as their name read at the time.
+   *
+   * Null means nobody did: the stale-visit cleanup closed it because it was
+   * left open overnight. That is worth showing rather than hiding — "closed by
+   * the system" and "closed by a person at the desk" are different records.
+   */
+  checkedOutByName: string | null;
 };
 
 export type HistoryFilters = {
@@ -173,6 +185,7 @@ export async function getVisitHistory(
       checkInTime: visit.checkInTime.toISOString(),
       checkOutTime: visit.checkOutTime?.toISOString() ?? null,
       status: visit.status,
+      checkedOutByName: visit.checkedOutByName,
     })),
   };
 }
@@ -209,11 +222,6 @@ export async function getVisitorFrequency(
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
 
-  const labelFormat = new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-  });
-
   return Array.from({ length: days }, (_, offset) => {
     const date = new Date(start);
     date.setDate(start.getDate() + offset);
@@ -222,7 +230,7 @@ export async function getVisitorFrequency(
 
     return {
       date: key,
-      label: labelFormat.format(date),
+      label: formatShortDate(date),
       count: counts.get(key) ?? 0,
     };
   });

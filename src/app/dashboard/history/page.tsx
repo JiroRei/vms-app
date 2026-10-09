@@ -1,7 +1,16 @@
 import Link from "next/link";
 
-import { getVisitHistory, getVisitorFrequency, PAGE_SIZE } from "@/lib/history";
-import { getHosts } from "@/lib/visits";
+import { EmptyState } from "@/components/empty-state";
+import {
+  getVisitHistory,
+  getVisitorFrequency,
+  PAGE_SIZE,
+  type HistoryFilters as Filters,
+} from "@/lib/history";
+// The full directory rather than `getHosts()`: a visit from last year still
+// belongs to whoever hosted it, so a host who has since left has to stay
+// filterable here even though the kiosk no longer offers them.
+import { listHosts } from "@/lib/hosts";
 
 import { HistoryFilters } from "./history-filters";
 import { HistoryTable } from "./history-table";
@@ -16,6 +25,17 @@ function readParam(
   return typeof value === "string" ? value : "";
 }
 
+/** Whether the visitor is looking at a filtered view or the whole log. */
+function hasActiveFilters(filters: Filters): boolean {
+  return Boolean(
+    filters.search ||
+      filters.hostId ||
+      filters.from ||
+      filters.to ||
+      filters.hideDeliveries,
+  );
+}
+
 export default async function HistoryPage({
   searchParams,
 }: {
@@ -25,7 +45,7 @@ export default async function HistoryPage({
   // to /login before this renders.
   const params = await searchParams;
 
-  const filters = {
+  const filters: Filters = {
     search: readParam(params, "search"),
     hostId: readParam(params, "hostId"),
     from: readParam(params, "from"),
@@ -36,7 +56,7 @@ export default async function HistoryPage({
 
   const [history, hosts, frequency] = await Promise.all([
     getVisitHistory(filters),
-    getHosts(),
+    listHosts(),
     // Always 30 days; the chart's week view slices client-side.
     getVisitorFrequency(30),
   ]);
@@ -56,6 +76,7 @@ export default async function HistoryPage({
     return qs ? `/dashboard/history?${qs}` : "/dashboard/history";
   }
 
+  const filtered = hasActiveFilters(filters);
   const firstRow = history.total === 0 ? 0 : (history.page - 1) * PAGE_SIZE + 1;
   const lastRow = Math.min(history.page * PAGE_SIZE, history.total);
 
@@ -92,7 +113,28 @@ export default async function HistoryPage({
             : `Showing ${firstRow}–${lastRow} of ${history.total}`}
         </p>
 
-        <HistoryTable visits={history.visits} />
+        {history.visits.length === 0 ? (
+          <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            // An empty log and an over-narrow filter look identical in a blank
+            // table but need different next steps, so they are worded apart.
+            filtered ? (
+              <EmptyState
+                icon="🔍"
+                title="No visits match these filters"
+                hint="Try widening the date range, or clearing the host and name filters."
+                action={
+                  <Link
+                    href="/dashboard/history"
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                  >
+                    Clear all filters
+                  </Link>
+                }
+              />
+            </div>
+        ) : (
+          <HistoryTable visits={history.visits} />
+        )}
 
         {history.pageCount > 1 && (
           <nav
@@ -132,8 +174,10 @@ function PageLink({
   disabled: boolean;
   children: React.ReactNode;
 }) {
+  // `py-2` over the old `py-1.5`: these are the one control on the page a guard
+  // taps repeatedly on a phone.
   const className =
-    "rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium shadow-sm dark:border-gray-600";
+    "rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium shadow-sm dark:border-gray-600";
 
   if (disabled) {
     return (

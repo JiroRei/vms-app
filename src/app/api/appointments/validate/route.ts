@@ -1,10 +1,17 @@
 import { NextResponse } from "next/server";
 
+import { clientIp, consumeRateLimit } from "@/lib/rate-limit";
 import {
   APPOINTMENT_FAILURE_MESSAGE,
   APPOINTMENT_FAILURE_STATUS,
   validateAppointmentToken,
 } from "@/lib/qr";
+
+/**
+ * Same budget the kiosk reference lookup had on clark_dev: a whole queue at the
+ * door is normal, a script walking codes is not.
+ */
+const LOOKUP_LIMIT = { window: 60, max: 30 };
 
 /**
  * POST /api/appointments/validate — resolve a scanned or typed code.
@@ -21,6 +28,21 @@ import {
  * valid, so an attacker learns only whether a code they already hold works.
  */
 export async function POST(request: Request) {
+  const limit = consumeRateLimit(
+    `appointment-lookup:${clientIp(request.headers)}`,
+    LOOKUP_LIMIT,
+  );
+
+  if (!limit.allowed) {
+    return NextResponse.json(
+      {
+        error:
+          "Too many lookups from this terminal just now. Please wait a moment, or ask reception for help.",
+      },
+      { status: 429, headers: { "Retry-After": String(limit.retryAfter) } },
+    );
+  }
+
   let body: unknown;
 
   try {

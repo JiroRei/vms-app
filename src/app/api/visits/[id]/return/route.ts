@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 
-// TEMP: dev-only auth, replace with Better Auth call.
-import { getDevSession } from "@/lib/dev-auth";
+import { getSession } from "@/lib/session";
 import { markVisitReturned } from "@/lib/visits";
 
 /**
@@ -14,8 +13,7 @@ export async function POST(
   _request: Request,
   context: RouteContext<"/api/visits/[id]/return">,
 ) {
-  // TEMP: dev-only auth, replace with Better Auth call.
-  const session = await getDevSession();
+  const session = await getSession();
 
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

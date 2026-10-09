@@ -2,8 +2,7 @@ import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
 import { createDeliveryLog } from "@/lib/visits";
-// TEMP: dev-only auth, replace with Better Auth call.
-import { getDevSession } from "@/lib/dev-auth";
+import { getSession } from "@/lib/session";
 
 /** Caps on the free-text fields, so a paste cannot write an essay to the table. */
 const MAX_NAME = 120;
@@ -23,8 +22,7 @@ const MAX_NOTE = 280;
  * different destinations.
  */
 export async function POST(request: Request) {
-  // TEMP: dev-only auth, replace with Better Auth call.
-  const session = await getDevSession();
+  const session = await getSession();
 
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -91,6 +89,7 @@ export async function POST(request: Request) {
 
     const created = await createDeliveryLog({
       name: trimmedName,
+      loggedBy: { id: session.userId, name: session.name },
       hostId: selectedHostId || null,
       recipientDepartment: selectedHostId ? null : typedDepartment || null,
       note: trimmedNote || null,

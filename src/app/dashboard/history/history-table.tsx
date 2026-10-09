@@ -4,6 +4,7 @@ import { Fragment, useState } from "react";
 
 import { TimelineChevron, VisitTimeline } from "@/components/visit-timeline";
 import { VisitorTypeBadge } from "@/components/visitor-type-badge";
+import { formatDuration } from "@/lib/dates";
 import type { HistoryVisit } from "@/lib/history";
 import { formatFullName } from "@/lib/names";
 
@@ -30,12 +31,23 @@ function formatDateTime(iso: string): string {
 function StatusCell({ visit }: { visit: HistoryVisit }) {
   if (visit.checkOutTime) {
     return (
-      <span
-        className="tabular-nums text-gray-600 dark:text-gray-300"
-        suppressHydrationWarning
-      >
-        {formatDateTime(visit.checkOutTime)}
-      </span>
+      <div suppressHydrationWarning>
+        <span className="tabular-nums text-gray-600 dark:text-gray-300">
+          {formatDateTime(visit.checkOutTime)}
+        </span>
+        {/* Both ends of the stay are recorded, so this is fixed history — no
+            clock needed, and it renders identically on server and client. */}
+        <span className="block text-xs text-gray-400 dark:text-gray-500">
+          {formatDuration(visit.checkInTime, visit.checkOutTime)} on site
+        </span>
+        {/* No name means the overnight cleanup closed it rather than a person
+            at the desk — a different kind of record, so it says so. */}
+        <span className="block text-xs text-gray-400 dark:text-gray-500">
+          {visit.checkedOutByName
+            ? `by ${visit.checkedOutByName}`
+            : "closed automatically"}
+        </span>
+      </div>
     );
   }
 
@@ -101,7 +113,9 @@ export function HistoryTable({ visits }: { visits: HistoryVisit[] }) {
   return (
     <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        {/* The min-width makes a narrow screen scroll the table rather than
+            crushing its columns into unreadable slivers. */}
+        <table className="w-full min-w-[48rem] text-sm">
           <thead>
             <tr className="border-b border-gray-200 bg-gray-50 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:border-gray-700 dark:bg-gray-700/50 dark:text-gray-400">
               <th scope="col" className="px-4 py-3">

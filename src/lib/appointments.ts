@@ -1,6 +1,7 @@
 import "server-only";
 
 import { Prisma } from "@/generated/prisma/client";
+import type { AppointmentStatus } from "@/generated/prisma/enums";
 import {
   resolveBookingProfile,
   type VerifiedClaim,
@@ -36,8 +37,11 @@ export type CreateAppointmentInput = {
   scheduledFor: Date;
   /** The verified-cookie claim, if any. See `resolveBookingProfile()`. */
   verified: VerifiedClaim | null;
-  /** When the visitor accepted the privacy notice. */
-  consentAcceptedAt: Date;
+  /**
+   * When the visitor accepted the privacy notice. Null when staff
+   * pre-register someone from the dashboard: the visitor never saw the form.
+   */
+  consentAcceptedAt: Date | null;
 };
 
 export type CreatedAppointment = {
@@ -245,4 +249,102 @@ export async function redeemAppointment(
       },
     } as const;
   });
+}
+
+// ---------------------------------------------------------------------------
+// Staff-side management (dashboard /appointments)
+//
+// Merged in from clark_dev and rebuilt on the revamp's model: appointments are
+// created through `createAppointment()` above (so a staff booking gets the same
+// QR token, expiry and profile handling as a public one), and cancelling moves
+// the row to CANCELLED rather than deleting it.
+// ---------------------------------------------------------------------------
+
+export type AppointmentListItem = {
+  id: string;
+  referenceNumber: string;
+  firstName: string;
+  lastName: string;
+  visitorEmail: string;
+  purposeLabel: string | null;
+  hostId: string;
+  hostName: string;
+  hostDepartment: string;
+  /** ISO strings; this crosses to the client. */
+  scheduledFor: string;
+  expiresAt: string;
+  status: AppointmentStatus;
+  /**
+   * Still usable at the kiosk: PENDING and not past `expiresAt`. Everything
+   * else (checked in, cancelled, lapsed) is history as far as the desk cares.
+   */
+  open: boolean;
+  createdAt: string;
+};
+
+/**
+ * The staff list of pre-registered visits. Open ones first, in the order they
+ * are expected, since the question at a front desk is "who are we waiting
+ * for?"; the rest follow, newest first.
+ */
+export async function listAppointments(): Promise<AppointmentListItem[]> {
+  const now = new Date();
+
+  const appointments = await prisma.appointment.findMany({
+    orderBy: [{ scheduledFor: "asc" }, { createdAt: "desc" }],
+    include: { host: true, purpose: true },
+  });
+
+  const items = appointments.map((appointment) => ({
+    id: appointment.id,
+    referenceNumber: appointment.referenceNumber,
+    firstName: appointment.firstName,
+    lastName: appointment.lastName,
+    visitorEmail: appointment.visitorEmail,
+    purposeLabel: appointment.purpose?.label ?? null,
+    hostId: appointment.hostId,
+    hostName: appointment.host.name,
+    hostDepartment: appointment.host.department,
+    scheduledFor: appointment.scheduledFor.toISOString(),
+    expiresAt: appointment.expiresAt.toISOString(),
+    status: appointment.status,
+    open: classifyAppointment(appointment, now) === null,
+    createdAt: appointment.createdAt.toISOString(),
+  }));
+
+  return [
+    ...items.filter((item) => item.open),
+    ...items.filter((item) => !item.open).reverse(),
+  ];
+}
+
+export type CancelResult = "cancelled" | "not-pending" | "not-found";
+
+/**
+ * Cancels an appointment that has not been redeemed.
+ *
+ * `status: "PENDING"` sits in the WHERE clause, so a cancel racing a check-in
+ * at the kiosk loses cleanly: the row is already CHECKED_IN, nothing changes,
+ * and the visitor at the door keeps the visit they just started. The row is
+ * kept, as CANCELLED, so the kiosk can tell the visitor why their code no
+ * longer works.
+ */
+export async function cancelAppointment(
+  reference: string,
+): Promise<CancelResult> {
+  const referenceNumber = reference.trim().toUpperCase();
+
+  const { count } = await prisma.appointment.updateMany({
+    where: { referenceNumber, status: "PENDING" },
+    data: { status: "CANCELLED" },
+  });
+
+  if (count > 0) return "cancelled";
+
+  const existing = await prisma.appointment.findUnique({
+    where: { referenceNumber },
+    select: { id: true },
+  });
+
+  return existing ? "not-pending" : "not-found";
 }

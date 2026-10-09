@@ -109,8 +109,8 @@ export async function POST(request: Request) {
     // Both checked up front so an unknown id is a 400 rather than a
     // foreign-key 500, and so a retired purpose cannot be booked against.
     const [host, purpose] = await Promise.all([
-      prisma.host.findUnique({
-        where: { id: selectedHostId },
+      prisma.host.findFirst({
+        where: { id: selectedHostId, active: true },
         select: { id: true },
       }),
       findSelectablePurpose(selectedPurposeId),

@@ -1,12 +1,17 @@
 import { NextResponse } from "next/server";
 
-// TEMP: dev-only auth, replace with Better Auth call.
-import { getDevSession } from "@/lib/dev-auth";
+import { clientIp, consumeRateLimit } from "@/lib/rate-limit";
+import { getSession } from "@/lib/session";
 import { redeemAppointment } from "@/lib/appointments";
 import {
   APPOINTMENT_FAILURE_MESSAGE,
   APPOINTMENT_FAILURE_STATUS,
 } from "@/lib/qr";
+
+/**
+ * Same budget the kiosk redeem endpoint had on clark_dev.
+ */
+const REDEEM_LIMIT = { window: 60, max: 20 };
 
 /**
  * POST /api/appointments/check-in — redeem a scanned or typed code.
@@ -22,6 +27,21 @@ import {
  * Claiming `false` while signed in only ever records less, never more.
  */
 export async function POST(request: Request) {
+  const limit = consumeRateLimit(
+    `appointment-redeem:${clientIp(request.headers)}`,
+    REDEEM_LIMIT,
+  );
+
+  if (!limit.allowed) {
+    return NextResponse.json(
+      {
+        error:
+          "Too many check-ins from this terminal just now. Please wait a moment, or ask reception for help.",
+      },
+      { status: 429, headers: { "Retry-After": String(limit.retryAfter) } },
+    );
+  }
+
   let body: unknown;
 
   try {
@@ -43,8 +63,7 @@ export async function POST(request: Request) {
   let checkedInBy: string | null = null;
 
   if (assisted === true) {
-    // TEMP: dev-only auth, replace with Better Auth call.
-    const session = await getDevSession();
+    const session = await getSession();
 
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

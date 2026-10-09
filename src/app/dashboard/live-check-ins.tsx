@@ -1,7 +1,9 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 
+import { EmptyState } from "@/components/empty-state";
 import { useToast } from "@/components/toast";
 import { VisitStatusBadge } from "@/components/visit-status-badge";
 import { TimelineChevron, VisitTimeline } from "@/components/visit-timeline";
@@ -43,6 +45,7 @@ export function LiveCheckIns({
   initialVisits: ActiveVisit[];
 }) {
   const showToast = useToast();
+  const router = useRouter();
 
   const [visits, setVisits] = useState(initialVisits);
   const [pendingIds, setPendingIds] = useState<string[]>([]);
@@ -65,12 +68,41 @@ export function LiveCheckIns({
   const inFlight = useRef(false);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  /**
+   * Set the moment a 401 comes back. A ref rather than state because the poll
+   * and the action handler both branch on it in the same tick they set it — a
+   * state update would not have landed yet, and the interval would fire one
+   * more doomed request.
+   */
+  const signedOut = useRef(false);
+
+  /**
+   * A 401 means the session is gone — it expired mid-shift, or it was revoked.
+   * Every button on this page will fail from here, so say so plainly instead of
+   * reporting it as a network fault and leaving the guard pressing buttons that
+   * quietly do nothing.
+   *
+   * `router.refresh()` re-runs the dashboard layout, whose session check sends
+   * them to /login. The server decides where they go; this only asks it again.
+   */
+  const handleSessionLoss = useCallback(() => {
+    if (signedOut.current) return;
+    signedOut.current = true;
+    setPollError("Your session has ended — taking you back to sign in…");
+    router.refresh();
+  }, [router]);
+
   const refresh = useCallback(async () => {
-    if (inFlight.current) return;
+    if (inFlight.current || signedOut.current) return;
     inFlight.current = true;
 
     try {
       const response = await fetch("/api/visits", { cache: "no-store" });
+
+      if (response.status === 401) {
+        handleSessionLoss();
+        return;
+      }
 
       if (!response.ok) {
         throw new Error(`Request failed with ${response.status}`);
@@ -84,7 +116,7 @@ export function LiveCheckIns({
     } finally {
       inFlight.current = false;
     }
-  }, []);
+  }, [handleSessionLoss]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -170,6 +202,9 @@ export function LiveCheckIns({
       if (response.ok) {
         applyLocally(visitId, action);
         showToast(ACTION_DONE[action](visitorName));
+      } else if (response.status === 401) {
+        handleSessionLoss();
+        return;
       } else if (response.status === 409 || response.status === 404) {
         // The row already moved on server-side — a double-click, or another
         // guard. Checking out means it is gone either way; the other two are
@@ -307,11 +342,12 @@ export function LiveCheckIns({
           <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
             {visits.length === 0 ? (
               <tr>
-                <td
-                  className="px-4 py-8 text-center text-gray-500 dark:text-gray-400"
-                  colSpan={5}
-                >
-                  No active check-ins
+                <td colSpan={5}>
+                  <EmptyState
+                    icon="🪑"
+                    title="Nobody is checked in right now"
+                    hint="Visitors appear here the moment they check in at the kiosk."
+                  />
                 </td>
               </tr>
             ) : (

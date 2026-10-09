@@ -6,6 +6,16 @@ For the current state of the project rather than its history, see
 
 ---
 
+## 2026-10-08 — Merge: revamp (`b64111a`) + `origin/staging` (clark_dev, PR #2)
+
+**Status:** merged on `staging`, verified locally, not yet pushed.
+**Rule applied:** where the two lines disagreed, the revamp's model and routes
+win; Clark's features that did not compete with it are kept and adapted to it.
+
+Full log of every conflict, decision and follow-up: [`git-merge.md`](./git-merge.md).
+
+---
+
 ## 2026-10-08 — Visitor names split into first and last
 
 **Status:** complete and verified · ⚠️ **uncommitted** on `staging`
@@ -113,6 +123,338 @@ walk-in, `Visit`/`Visitor`, rescheduling and cancellation, double-booking.
 codes, attempt cap, rate limit, forged cookie, slot edges) plus a headless-Chrome
 walk through both flows at 390px: no hydration warnings. Test rows were deleted
 afterwards.
+
+---
+
+## 2026-09-22 (second pass) — Tests, and the lapses the audit had been listing
+
+**Status:** complete · typecheck, lint, production build and **54 tests** pass ·
+⚠️ **uncommitted** on `clark_dev`
+
+The backlog had been accumulating known-but-unfixed items for three sessions.
+This clears everything that is not blocked on infrastructure, and says plainly
+which two are.
+
+### Added
+
+- **A test suite — `npm test`, 54 tests, no new dependencies.** `node --test`
+  driven through tsx with `--conditions=react-server`, which is what lets the
+  `server-only` modules load outside Next.
+  - Runs against a **separate `vms_test` database**, derived from
+    `DATABASE_URL` by `tests/setup.ts` rather than configured on its own. There
+    is no second connection string to keep correct, and a stale one cannot
+    quietly point the suite at data someone cares about — it refuses outright
+    unless the database name ends in `_test`.
+  - `--test-concurrency=1`, because the files share a database and parallel
+    resets were wiping each other mid-test.
+  - Covers the visit lifecycle including both concurrency races, appointment
+    single-use under simultaneous redemption, the stale-cleanup close-time
+    rule, the last-administrator guards, the rate limiter and the formatters.
+- **`POST /api/cron/close-stale`** — a token-authenticated door for a
+  scheduler. `closeStaleVisits()` was always parameterless for this. **Closed
+  with 503 unless `CRON_SECRET` is set**, so a missing value fails safe rather
+  than leaving an unauthenticated endpoint that empties the live list.
+- **Check-out attribution.** `Visit.checkedOutById` and `checkedOutByName`.
+  Two columns on purpose: the id is the live link and goes null if the account
+  is removed, while the name is a copy taken at the time and does not — an
+  audit line that evaporates when someone leaves is not an audit line. Both
+  null means the overnight cleanup closed it, and that absence is itself the
+  fact worth recording. History shows "by Rosa Santos" or "closed
+  automatically".
+
+### Changed
+
+- **`Visitor.hostId` and `Appointment.hostId` are now `onDelete: Restrict`.**
+  Under `Cascade`, one `DELETE FROM host` took every visitor that host ever
+  received and — through `Visit.visitorId` — every one of those visits. Nothing
+  in the app did that, but the cascade was loaded and pointed at the history.
+  The database now refuses. Three tests hold the line.
+- **Dark mode reaches `/` and `/login`.** The toggle had no effect on either.
+  The kiosk stays light deliberately: a door tablet has no stored preference
+  and never will.
+
+### Blocked, not forgotten
+
+Both need a provider and credentials that do not exist yet, so neither is
+buildable from here:
+
+- **Host notification.** Nothing emails, texts or pages anyone. The kiosk copy
+  has been honest about this since the first pass.
+- **Password reset for a forgotten password.** Better Auth's reset endpoints
+  need a mail sender. Changing a password you know works today.
+
+---
+
+## 2026-09-22 — A database at last; appointments and hosts become manageable
+
+**Status:** complete · typecheck, lint and production build pass · **verified
+end to end against a running server** · ⚠️ **uncommitted** on `clark_dev`
+**Scope:** an isolated dev database, the two red lapses from yesterday's audit,
+and the two modules that were keeping the system from closing its own loop.
+
+Yesterday's work could not be run. It can now, and it was — every claim in
+`STATUS.md`'s verification table was checked with `curl` against a live server,
+including the ones that would have been embarrassing to get wrong (sign-up is
+refused; a guard cannot write their own `role`).
+
+### Added
+
+- **A dev Postgres cluster of this repo's own**, `initdb` into
+  `C:\Users\josep\pgdata\vms-dev` on **port 5433**, password auth, started with
+  `pg_ctl`. The PostgreSQL service on 5432 is untouched — its password was never
+  recovered and is no longer needed. Migrations 1–5 applied cleanly from empty.
+- **Appointment management** — `/dashboard/appointments`, `POST /api/appointments`,
+  `DELETE /api/appointments/[reference]`, and `createAppointment` /
+  `listAppointments` / `cancelAppointment` in `src/lib/appointments.ts`.
+
+  This closes a loop that was open: the kiosk could *redeem* a reference number
+  and nothing in the running application could *produce* one. Appointments
+  existed only in `prisma/seed.ts`, so pre-registering a visitor meant editing
+  TypeScript and re-seeding.
+
+  References are now generated rather than sequential — six characters from a
+  31-character alphabet with `O`/`0` and `I`/`1`/`L` removed, because a visitor
+  reads one off a phone and types it on a tablet. That is ~887 million, which
+  retires the enumeration finding from the 2026-09-21 audit for everything
+  except the seed fixtures, which stay fixed so they can be documented.
+- **`Appointment.scheduledFor`** (migration `20260922092908`) — nullable. The
+  kiosk does not check it; it orders the list and answers "who are we expecting
+  today?", which was unanswerable before.
+- **Host directory management** — `/dashboard/hosts` (admin only), `POST /api/hosts`,
+  `PATCH /api/hosts/[id]`, and a new `src/lib/hosts.ts`.
+- **`Host.active`** (migration `20260922093221`) — soft delete, and not as a
+  nicety. `Visitor.hostId` is `onDelete: Cascade` and `Visit.visitorId` cascades
+  from there, so deleting one host row would delete every visitor they ever
+  received and every visit those visitors made. There is deliberately **no**
+  DELETE route. `getHosts()` now returns active hosts only, so a host who has
+  left drops off the kiosk; the history filter uses the full directory, because
+  last year's visit still belongs to whoever hosted it.
+
+### Fixed
+
+- **The kiosk no longer tells visitors their host has been notified.** Nothing
+  notifies anyone — there is no email, no SMS, no queue anywhere in the
+  codebase. Both confirmation screens now say reception can see they have
+  arrived, which is the part that is true.
+- **An expired session no longer masquerades as a network fault.** The live list
+  caught the 401 from `/api/visits` and showed "Live updates paused — retrying…"
+  indefinitely, leaving a signed-out guard pressing check-out buttons that
+  quietly did nothing. A 401 from the poll or from any row action now says the
+  session ended and calls `router.refresh()`, which re-runs the layout's session
+  check and lands them on `/login`. The guard is a ref, not state, so the
+  in-flight interval cannot fire one more doomed request before it takes effect.
+
+### Verified
+
+See the table in `STATUS.md`. Twelve checks, including both role gates, the
+sign-up refusal, the `role`-escalation refusal, the rate limiter tripping at the
+sixth sign-in, and the full appointment round trip from creation through kiosk
+redemption to the live check-in list.
+
+### Then, the same day — staff accounts
+
+The last seed-only entity. `/dashboard/staff` (admin) creates, promotes,
+demotes and removes logins; `/dashboard/account` lets anyone change their own
+password.
+
+- **Accounts are written directly**, user + credential `account` in one
+  transaction, rather than through `auth.api.signUpEmail`. That call is refused
+  exactly as a request to `/api/auth/sign-up/email` would be — the
+  `disableSignUp` check lives inside the endpoint, not in the HTTP layer — so
+  going through it would have meant reopening public sign-up to use it.
+  Verified the long way round: an admin-created account signs in.
+- **Deleting a staff account is safe in a way deleting a host is not.** Nothing
+  in the visit chain references `User`; only `session` and `account` do, and
+  both cascade. An account's rows are its logins, not its history.
+- **Three guards on the way out:** nobody can delete the account they are
+  signed in as, nobody can demote themselves out of admin, and the last
+  administrator can be neither removed nor demoted — otherwise the only way
+  back in would be re-running the seed.
+- **The password change route brings its own rate limit**, for the same reason
+  the login action does: guessing a current password there would be as good as
+  guessing it at the login form, and `auth.api.*` skips Better Auth's limiter.
+  It revokes other sessions and reissues the current one.
+
+### Known to be unfinished
+
+- Host notification remains unbuilt; the copy is honest about it now.
+- **No password reset, only change.** Someone who has forgotten theirs cannot
+  recover it — the reset endpoints need an email sender.
+- **No audit trail.** Nothing records which guard checked a visitor out or who
+  created an appointment. It is what makes deleting a staff account safe, and
+  it is a real gap for a system whose job is knowing who was in the building.
+- Still no automated tests. The verification table is a list of things someone
+  has to remember to re-run, and it is now nineteen rows long.
+
+---
+
+## 2026-09-21 — Better Auth switched on, rate limiting, theme flash
+
+**Status:** code complete · typecheck, lint and production build pass ·
+❌ **nothing verified against a database** — `.env` still holds the literal
+`YOUR_PASSWORD`, so the migration is unapplied, the seed has not run and no one
+has signed in · ⚠️ **uncommitted** on `clark_dev`
+**Scope:** authentication, the endpoints that take unauthenticated input, and
+one theme bug found while auditing.
+**Deliberately untouched:** the visit lifecycle, the shape of every visit API
+response, and the query logic in `src/lib/{visits,history,appointments,stale-visits}.ts`.
+
+The throwaway login is gone. `src/lib/dev-auth.ts` compared passwords in
+plaintext and handed out an unsigned JSON cookie that anyone could forge into an
+`ADMIN` session; both are replaced by Better Auth.
+
+### Added
+
+- **`src/lib/session.ts`** — the one place `auth.api.getSession` is called.
+  Wrapped in React's `cache`, so the dashboard layout and the page it renders
+  share a single lookup instead of each making its own round trip, and it
+  narrows `role` to the Prisma enum: anything that is not exactly `ADMIN` reads
+  as `GUARD`, because an unrecognised value is a reason to grant less.
+- **`src/app/api/auth/[...all]/route.ts`** — Better Auth's own endpoints. Only
+  `GET` and `POST` are exported; no other verb is used, so the rest 405 rather
+  than being silently routed.
+- **`src/lib/rate-limit.ts`** — a fixed-window in-memory limiter, applied to
+  sign-in (5/min), kiosk check-in and appointment redemption (20/min each) and
+  appointment lookup (30/min). The kiosk limits are sized for the busiest single
+  terminal, not for one visitor: every check-in from a kiosk shares one address,
+  so a queue at the door must still get through.
+- **Migration `20260921093731_drop_user_password`** — drops `user.password`.
+  Written with `prisma migrate diff --from-schema … --to-schema …`, which needs
+  no database connection.
+
+### Changed
+
+- **`src/lib/auth.ts`** activated, with three decisions worth naming:
+  - **`disableSignUp: true`.** The catch-all mounts *every* configured endpoint,
+    and that includes `POST /api/auth/sign-up/email`. Left open, anyone who
+    found it could issue themselves a `GUARD` account with dashboard access.
+  - **`role` stays `input: false`,** so the mounted `/api/auth/update-user`
+    cannot write it. Without that, a guard could promote themselves to `ADMIN`.
+  - **8-hour sessions refreshed hourly.** The default `updateAge` is a day,
+    which would never fire inside an 8-hour session and would drop a guard
+    mid-shift exactly 8 hours after they signed in.
+- **`src/app/login/actions.ts`** now calls `auth.api.signInEmail` /
+  `signOut`. It carries its own rate limit because Better Auth's limiter is an
+  `onRequest` hook in the HTTP pipeline that a direct `auth.api.*` call never
+  enters — the form would otherwise have been the unmetered way past the metered
+  endpoint beside it. A failed sign-in says the same thing whatever went wrong,
+  so the page can't be used to test which addresses have accounts.
+- **`prisma/seed.ts`** writes the credential as a scrypt hash on `account`,
+  using the same `hashPassword` Better Auth verifies against. Both halves
+  sign-in checks are set: `providerId: "credential"` and `accountId` equal to
+  the user's own id. Since sign-up is disabled, the seed is now the only way an
+  account comes into existence, and re-running it is the password reset.
+- **Theme no longer flashes.** An inline script in the root layout applies the
+  stored theme while the HTML is still parsing, per the pattern in Next's
+  `preventing-flash-before-hydration` guide. `ThemeToggle` now picks its icon in
+  CSS rather than from React state — branching on `theme` put the moon in the
+  server's HTML and the sun in the client's first render, a hydration mismatch
+  on every load in dark mode.
+- **The five call sites** that read a session now import `getSession` from
+  `@/lib/session`; the `// TEMP: dev-only auth` markers are gone.
+
+### Removed
+
+- **`src/lib/dev-auth.ts`** and the `password` column on `User`.
+
+### Known to be unfinished
+
+- Nothing here has been run. The next session's first job is a working
+  `DATABASE_URL`, then `npx prisma migrate dev`, `npm run db:seed`, and an
+  actual sign-in as both roles.
+- Appointment references are still sequential and still readable by anyone who
+  can reach the kiosk endpoint. Rate limiting slows enumeration; it does not fix
+  it.
+- `/` and `/login` have no dark styles, so the toggle has no effect there.
+
+---
+
+## 2026-09-18 — Kiosk hardening, shared formatting, docs
+
+**Status:** complete · typecheck, lint and production build pass ·
+⚠️ **uncommitted** on `clark_dev`
+**Scope:** presentation, kiosk form behaviour and documentation.
+**Deliberately untouched:** the visit lifecycle, every API route, the Prisma
+schema, and `src/lib/{visits,history,appointments,stale-visits}.ts` query logic.
+No migration was needed.
+
+A polish pass over the two surfaces people actually touch: the unattended kiosk
+and the guard's dashboard.
+
+### Added
+
+- **`src/lib/dates.ts` grew a display-formatting half** — `formatTime`,
+  `formatDate`, `formatShortDate`, `formatDateTime` and `formatDuration`, next
+  to the day-boundary helpers that were already there. The locale is **pinned to
+  `en-US`** rather than left as `[]`, which previously resolved to whatever
+  locale the browser or the server happened to run in. Unparseable or missing
+  values render as `—` instead of `Invalid Date`.
+- **Kiosk idle reset** — `src/app/kiosk/use-idle-timeout.ts` plus
+  `kiosk-idle-reset.tsx`, mounted once from a new `src/app/kiosk/layout.tsx` so
+  it covers all three flows *and* their "You're checked in!" screens. Prompts
+  "Are you still there?" at 45s, returns to `/kiosk` at 60s. Uses `replace`, not
+  `push`, so the back button cannot walk the next visitor into the previous
+  one's half-filled form. While the prompt is up, only its buttons dismiss it —
+  a passer-by brushing the screen must not cancel a reset already announced.
+- **`src/app/kiosk/form-styles.ts`** — one set of control classes for all three
+  kiosk forms, sized for a finger (~44px targets, 16px text so iOS Safari stops
+  zooming the page on focus).
+- **`EmptyState`** and **`TableSkeleton` / `SkeletonLine`** in `src/components/`.
+- **`loading.tsx`** for `/dashboard` and `/dashboard/history`.
+- **A seeded `GUARD` user** — `guard@geoplan.ph` / `guard123` — so role-gated
+  behaviour can be exercised both ways without hand-editing the database.
+
+### Changed
+
+- **Every timestamp** now goes through `src/lib/dates.ts`. `live-check-ins.tsx`,
+  `dashboard/history/page.tsx` and the chart labels in `lib/history.ts` each had
+  their own inline formatter with a different option set; none remain.
+- **History check-out cell** gained a "2h 15m on site" line under the timestamp.
+  Both ends of a finished visit are recorded, so it needs no clock and renders
+  identically on server and client.
+- **Walk-in, appointment and delivery forms**: field errors clear as soon as the
+  visitor edits that field, the first invalid field is focused on a failed
+  submit, `aria-describedby` wires errors to their inputs, submit handlers guard
+  against a double-tap landing before React re-renders the disabled button, and
+  inputs are `autoComplete="off"` (a kiosk is shared).
+- **Appointment lookup** now distinguishes an unusable reference (404/409) from
+  a failed request. "Register as a walk-in instead" only appears for the first —
+  it was previously offered after a network blip, throwing away a valid
+  appointment. A network failure at the confirm step now keeps the visitor on
+  the confirm screen, where one more tap retries.
+- **Live check-in list**: a "Updating…" pulse on the Live indicator while a poll
+  is in flight (the rows are never blanked, so the table cannot jump), and a
+  real empty state instead of the bare "No active check-ins".
+- **History empty state** now tells an empty log apart from an over-narrow
+  filter, and offers "Clear all filters" for the second.
+- **History filters** run the navigation inside `useTransition`, so Apply shows
+  "Applying…" and the current table stays on screen until the new one is ready.
+- **Responsive pass.** Kiosk screens use `min-h-dvh` (`100vh` counts the mobile
+  address bar and pushed the submit button below the fold) with vertical padding
+  so a tall form is not clipped by `justify-center`. The live check-in list
+  renders as **stacked cards below `md`** — its action buttons were off the
+  right edge of a phone, which is exactly where a roving guard needs them. The
+  history table gained a `min-w` so it scrolls instead of crushing five columns.
+  Dashboard gutters, nav links and dialog buttons resized for touch.
+
+### Docs
+
+- **`README.md`** rewritten from the stock `create-next-app` text: setup,
+  migrations, seeding, both test logins, seeded fixtures, scripts, routes, a
+  "what works right now" list and the known quirks.
+- **`STATUS.md`** refreshed — health checks, module table, test-login table, and
+  three new gotchas (restart `next dev` after a migration; what `P1000` looks
+  like from the app; `react-hooks/set-state-in-effect` is an error here).
+
+### Not verified
+
+The local Postgres refused the credentials in `.env` (`P1000`), so nothing
+DB-backed was exercised end to end this session: no seed run, no migration
+status, and `/kiosk/walkin`, `/kiosk/delivery`, `/dashboard` and
+`/dashboard/history` were not rendered against real data. Verified instead:
+typecheck, lint, production build, a unit check of all five formatters, and
+`/`, `/kiosk`, `/kiosk/appointment`, `/login` returning 200 with `/dashboard`
+redirecting to `/login`.
 
 ---
 

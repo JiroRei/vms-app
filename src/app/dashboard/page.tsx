@@ -1,7 +1,6 @@
 import Link from "next/link";
 
-// TEMP: dev-only auth, replace with Better Auth call.
-import { getDevSession } from "@/lib/dev-auth";
+import { getSession } from "@/lib/session";
 import { getActiveVisits, getHosts } from "@/lib/visits";
 
 import { CloseStaleVisits } from "./close-stale-visits";
@@ -14,7 +13,7 @@ export default async function DashboardPage() {
   const [visits, hosts, session] = await Promise.all([
     getActiveVisits(),
     getHosts(),
-    getDevSession(),
+    getSession(),
   ]);
 
   return (

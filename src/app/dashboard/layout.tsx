@@ -4,16 +4,14 @@ import { redirect } from "next/navigation";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { ToastProvider } from "@/components/toast";
 import { signOut } from "@/app/login/actions";
-import { getDevSession } from "@/lib/dev-auth";
+import { getSession } from "@/lib/session";
 
 export default async function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  // TEMP: dev-only auth, replace with Better Auth call
-  // (`auth.api.getSession({ headers: await headers() })`).
-  const session = await getDevSession();
+  const session = await getSession();
 
   if (!session) {
     redirect("/login");
@@ -44,31 +42,53 @@ export default async function DashboardLayout({
             Scan QR
           </Link>
           <Link
+            href="/dashboard/appointments"
+            className="block rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            Appointments
+          </Link>
+          <Link
             href="/dashboard/history"
             className="block rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
           >
             Visit History
           </Link>
 
-          {/* Admin-only, and the page redirects a guard who reaches it anyway. */}
+          {/* Admin-only. Each page redirects a guard who reaches it anyway, and
+              the APIs return 403 — hiding the links is convenience, not the
+              control. */}
           {session.role === "ADMIN" && (
-            <Link
-              href="/dashboard/settings/purposes"
-              className="block rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
-            >
-              Purpose Options
-            </Link>
+            <>
+              <Link
+                href="/dashboard/hosts"
+                className="block rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                Hosts
+              </Link>
+              <Link
+                href="/dashboard/staff"
+                className="block rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                Staff
+              </Link>
+              <Link
+                href="/dashboard/settings/purposes"
+                className="block rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                Purpose Options
+              </Link>
+            </>
           )}
         </nav>
         <div className="mt-6 space-y-3 border-t border-gray-200 pt-4 dark:border-gray-700">
-          <div>
-            <p className="truncate text-sm font-medium text-gray-900 dark:text-white">
+          <Link href="/dashboard/account" className="block">
+            <p className="truncate text-sm font-medium text-gray-900 hover:underline dark:text-white">
               {session.name}
             </p>
             <p className="text-xs text-gray-500 dark:text-gray-400">
               {session.role}
             </p>
-          </div>
+          </Link>
           <ThemeToggle />
           <form action={signOut}>
             <button
@@ -82,7 +102,7 @@ export default async function DashboardLayout({
       </aside>
 
       <div className="flex-1 flex flex-col">
-        <header className="flex items-center justify-between border-b border-gray-200 bg-white px-6 py-3 md:hidden dark:border-gray-700 dark:bg-gray-800">
+        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-white px-4 py-3 md:hidden sm:px-6 dark:border-gray-700 dark:bg-gray-800">
           <Link
             href="/dashboard"
             className="text-lg font-bold text-gray-900 dark:text-white"
@@ -90,10 +110,10 @@ export default async function DashboardLayout({
             VMS Dashboard
           </Link>
           <div className="flex items-center gap-4">
-            <nav className="flex gap-4">
+            <nav className="flex gap-1">
               <Link
                 href="/dashboard"
-                className="text-sm font-medium text-gray-700 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
+                className="rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white"
               >
                 Live
               </Link>
@@ -105,7 +125,7 @@ export default async function DashboardLayout({
               </Link>
               <Link
                 href="/dashboard/history"
-                className="text-sm font-medium text-gray-700 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
+                className="rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white"
               >
                 History
               </Link>
@@ -114,9 +134,10 @@ export default async function DashboardLayout({
           </div>
         </header>
         {/* Every dashboard action confirms itself through this, so it wraps
-            the whole subtree rather than any one page. */}
+            the whole subtree rather than any one page. Narrower gutters on a
+            phone: 24px each side is a lot of a 360px screen. */}
         <ToastProvider>
-          <main className="flex-1 p-6">{children}</main>
+          <main className="flex-1 p-4 sm:p-6">{children}</main>
         </ToastProvider>
       </div>
     </div>

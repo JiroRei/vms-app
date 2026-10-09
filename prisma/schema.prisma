@@ -62,12 +62,12 @@ model User {
   name  String
   role  Role   @default(GUARD)
 
-  // TEMP: dev-only plaintext password used by the throwaway login in
-  // `src/lib/dev-auth.ts`. Better Auth stores its own hashed credential on
-  // `Account.password`, so this column gets dropped when auth is switched on.
-  password String
-
-  // --- Better Auth required fields (scaffolded, not yet in use) ---
+  // --- Better Auth required fields ---
+  //
+  // No credential lives on this model. The hashed password sits on the user's
+  // `Account` row with `providerId: "credential"`, which is where Better Auth
+  // looks for it; a `User` with no such row simply cannot sign in with a
+  // password.
   emailVerified Boolean @default(false)
   image         String?
 
@@ -78,7 +78,11 @@ model User {
   accounts Account[]
 
   /// Visits this user checked in on a visitor's behalf.
-  checkedInVisits Visit[]
+  checkedInVisits Visit[] @relation("VisitCheckedInBy")
+
+  /// Visits this person closed. `onDelete: SetNull` on the other side, so
+  /// removing a staff account never removes a visit.
+  visitsCheckedOut Visit[] @relation("VisitCheckedOutBy")
 
   @@map("user")
 }
@@ -88,9 +92,17 @@ model Host {
   name       String
   department String
 
+  /// Whether the host still takes visitors. This is a soft delete, and it is
+  /// not optional politeness: `Visitor.hostId` cascades on delete, so removing
+  /// a host row would delete every visitor they ever received and, through
+  /// them, every one of those visits. Deactivating takes the host out of the
+  /// kiosk dropdown and leaves the history they are named in intact.
+  active Boolean @default(true)
+
   visitors     Visitor[]
   appointments Appointment[]
 
+  @@index([active])
   @@map("host")
 }
 
@@ -137,8 +149,14 @@ model Visitor {
 
   /// Optional: a courier may have no named recipient, so a delivery can be
   /// logged without a host. Guests always carry one.
+  ///
+  /// `Restrict`, not `Cascade`. Under Cascade, deleting one host row deleted
+  /// every visitor they ever received and — through `Visit.visitorId` — every
+  /// one of those visits. Hosts are retired with `active: false` instead, and
+  /// this makes the database refuse the destructive path rather than leaving it
+  /// to everyone remembering not to take it.
   hostId String?
-  host   Host?   @relation(fields: [hostId], references: [id], onDelete: Cascade)
+  host   Host?   @relation(fields: [hostId], references: [id], onDelete: Restrict)
 
   /// Where a delivery is headed when that is not one of the known hosts — the
   /// guard typed it instead of picking from the list. Mutually exclusive with
@@ -180,7 +198,21 @@ model Visit {
   /// visitor checked themselves in at the kiosk, so the presence of a user here
   /// is exactly what separates guard-assisted arrivals from self-service ones.
   checkedInBy     String?
-  checkedInByUser User?   @relation(fields: [checkedInBy], references: [id], onDelete: SetNull)
+  checkedInByUser User?   @relation("VisitCheckedInBy", fields: [checkedInBy], references: [id], onDelete: SetNull)
+
+  /// Who closed this visit.
+  ///
+  /// Two columns rather than one on purpose. The id is the live link, and goes
+  /// null if the account is ever removed; the name is a copy taken at the time
+  /// and does not, so the record still reads "checked out by Rosa Santos" long
+  /// after Rosa's login is gone. An audit line that evaporates when someone
+  /// leaves is not an audit line.
+  ///
+  /// Both are null for a visit closed by the stale-visit cleanup, which is
+  /// nobody — and that absence is itself the useful fact.
+  checkedOutById   String?
+  checkedOutBy     User?   @relation("VisitCheckedOutBy", fields: [checkedOutById], references: [id], onDelete: SetNull)
+  checkedOutByName String?
 
   createdAt DateTime @default(now())
 
@@ -190,6 +222,7 @@ model Visit {
   @@index([checkedInBy])
   @@index([checkOutTime])
   @@index([status])
+  @@index([checkedOutById])
   @@map("visit")
 }
 
@@ -249,8 +282,10 @@ model Appointment {
   purposeId String?
   purpose   PurposeOption? @relation(fields: [purposeId], references: [id], onDelete: Restrict)
 
+  /// `Restrict` for the same reason as `Visitor.hostId`: deleting a host
+  /// should never silently take pre-registrations with it.
   hostId String
-  host   Host   @relation(fields: [hostId], references: [id], onDelete: Cascade)
+  host   Host   @relation(fields: [hostId], references: [id], onDelete: Restrict)
 
   /// When the visitor is expected.
   scheduledFor DateTime
@@ -282,6 +317,7 @@ model Appointment {
   @@index([status])
   @@index([purposeId])
   @@index([visitorProfileId])
+  @@index([scheduledFor])
   @@map("appointment")
 }
 
@@ -291,7 +327,7 @@ model Appointment {
 /// Deliberately minimal and separate from `Visitor`/`Visit`, which stay
 /// per-visit; joining the two is a later identity refactor.
 model VisitorProfile {
-  id    String  @id @default(cuid())
+  id        String  @id @default(cuid())
   firstName String
   lastName  String
   /// `makeNameKey(firstName, lastName)`: lower-cased, accent-stripped,
@@ -301,8 +337,8 @@ model VisitorProfile {
   /// Stored lower-cased and trimmed, so lookups match however it was typed.
   /// Not unique on its own: a family or a shared work inbox can hold several
   /// people, each their own profile, told apart by name.
-  email String
-  phone String?
+  email     String
+  phone     String?
 
   createdAt DateTime @default(now())
 
@@ -343,8 +379,11 @@ model VisitorVerification {
 
 // ---------------------------------------------------------------------------
 // Better Auth models — generated by `@better-auth/cli generate`.
-// Scaffolded ahead of time so the tables exist; nothing writes to them until
-// Better Auth is switched on in `src/lib/auth.ts`.
+//
+// Better Auth owns every row in these tables: it supplies the ids (which is why
+// they carry no `@default`), and it is the only writer. `prisma/seed.ts` is the
+// one exception — it writes the staff `Account` rows directly so the seeded
+// logins exist without a sign-up endpoint being open.
 // ---------------------------------------------------------------------------
 
 model Session {

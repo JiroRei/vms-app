@@ -3,9 +3,16 @@ import { NextResponse } from "next/server";
 import { parseNameParts } from "@/lib/names";
 import { prisma } from "@/lib/prisma";
 import { findSelectablePurpose } from "@/lib/purposes";
+import { clientIp, consumeRateLimit } from "@/lib/rate-limit";
+import { getSession } from "@/lib/session";
 import { createWalkInVisit, getActiveVisits } from "@/lib/visits";
-// TEMP: dev-only auth, replace with Better Auth call.
-import { getDevSession } from "@/lib/dev-auth";
+
+/**
+ * Sized for the busiest single kiosk rather than for one visitor: every check-in
+ * from a terminal shares one address, so this has to clear a queue at the door
+ * while still being far below what a script would need.
+ */
+const CHECK_IN_LIMIT = { window: 60, max: 20 };
 
 /**
  * GET /api/visits — active (not yet checked out) visits.
@@ -14,8 +21,7 @@ import { getDevSession } from "@/lib/dev-auth";
  * dashboard session. The kiosk never calls it.
  */
 export async function GET() {
-  // TEMP: dev-only auth, replace with Better Auth call.
-  const session = await getDevSession();
+  const session = await getSession();
 
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -39,8 +45,27 @@ export async function GET() {
  * Deliberately unauthenticated: the kiosk is a public, unattended terminal.
  * That is also why deliveries are not accepted here — a courier drop-off is
  * logged by a guard through `POST /api/deliveries`, which requires a session.
+ *
+ * That makes it the one write endpoint anyone on the network can call, so it is
+ * rate limited — generously, because a whole tour group checking in one after
+ * another is normal and must not be turned away.
  */
 export async function POST(request: Request) {
+  const limit = consumeRateLimit(
+    `check-in:${clientIp(request.headers)}`,
+    CHECK_IN_LIMIT,
+  );
+
+  if (!limit.allowed) {
+    return NextResponse.json(
+      {
+        error:
+          "Too many check-ins from this terminal just now. Please wait a moment, or ask reception for help.",
+      },
+      { status: 429, headers: { "Retry-After": String(limit.retryAfter) } },
+    );
+  }
+
   let body: unknown;
 
   try {
@@ -75,8 +100,8 @@ export async function POST(request: Request) {
     // foreign-key 500. The purpose check also rejects a retired option, which a
     // kiosk page rendered before the admin retired it would still be offering.
     const [host, purpose] = await Promise.all([
-      prisma.host.findUnique({
-        where: { id: selectedHostId },
+      prisma.host.findFirst({
+        where: { id: selectedHostId, active: true },
         select: { id: true },
       }),
       findSelectablePurpose(selectedPurposeId),

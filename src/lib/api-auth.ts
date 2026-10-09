@@ -2,8 +2,7 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 
-// TEMP: dev-only auth, replace with Better Auth call.
-import { getDevSession } from "@/lib/dev-auth";
+import { getSession } from "@/lib/session";
 
 /**
  * Turns "must be an admin" into a response, or `null` to carry on.
@@ -16,8 +15,7 @@ import { getDevSession } from "@/lib/dev-auth";
  * `const denied = await requireAdmin(); if (denied) return denied;`.
  */
 export async function requireAdmin(): Promise<NextResponse | null> {
-  // TEMP: dev-only auth, replace with Better Auth call.
-  const session = await getDevSession();
+  const session = await getSession();
 
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

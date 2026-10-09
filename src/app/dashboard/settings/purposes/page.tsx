@@ -3,8 +3,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-// TEMP: dev-only auth, replace with Better Auth call.
-import { getDevSession } from "@/lib/dev-auth";
+import { getSession } from "@/lib/session";
 import { getPurposeOptions } from "@/lib/purposes";
 
 import { PurposeOptionsManager } from "./purpose-options-manager";
@@ -16,7 +15,7 @@ export default async function PurposesSettingsPage() {
   // The dashboard layout has already rejected anyone without a session; this
   // narrows that to admins. The API enforces the same rule — hiding the page is
   // not the control.
-  const session = await getDevSession();
+  const session = await getSession();
 
   if (session?.role !== "ADMIN") {
     redirect("/dashboard");
