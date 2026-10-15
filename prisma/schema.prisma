@@ -3,12 +3,57 @@
 
 generator client {
   provider = "prisma-client"
+  moduleFormat = "cjs"
   output   = "../src/generated/prisma"
 }
 
 datasource db {
   provider = "postgresql"
   // Prisma 7: the connection URL lives in `prisma7.config.ts`, not here.
+}
+
+model KioskDevice {
+  id         String   @id @default(cuid())
+  deviceId   String   @unique
+  label      String?
+  lastSeenAt DateTime @default(now())
+  retiredAt  DateTime?
+  createdAt  DateTime @default(now())
+  @@map("kiosk_device")
+}
+
+enum EmailStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+model EmailOutbox {
+  id            String      @id @default(cuid())
+  to            String
+  subject       String
+  html          String
+  text          String
+  attachments   Json        @default("[]")
+  kind          String
+  status        EmailStatus @default(PENDING)
+  attempts      Int         @default(0)
+  nextAttemptAt DateTime    @default(now())
+  lastError     String?
+  expiresAt     DateTime?
+  createdAt     DateTime    @default(now())
+  sentAt        DateTime?
+  lockedUntil   DateTime?
+  @@index([status, nextAttemptAt])
+  @@map("email_outbox")
+}
+
+model RateLimitBucket {
+  key       String   @id
+  count     Int      @default(1)
+  expiresAt DateTime
+  @@index([expiresAt])
+  @@map("rate_limit_bucket")
 }
 
 enum Role {
@@ -32,6 +77,31 @@ enum AppointmentStatus {
   EXPIRED
 }
 
+/// Who cancelled an appointment: the visitor through their manage page, or
+/// staff from the dashboard.
+enum CancelledBy {
+  VISITOR
+  STAFF
+}
+
+/// What happened to an appointment, one row per change. See `AppointmentEvent`.
+enum AppointmentEventType {
+  CREATED
+  RESCHEDULED
+  CANCELLED
+  QR_REGENERATED
+  CHECKED_IN
+}
+
+/// Who made an appointment change. VISITOR is anyone acting through the public
+/// pages (booking, manage, kiosk); STAFF carries `actorUserId`; SYSTEM is for
+/// changes nobody performed, such as backfilled history.
+enum AppointmentActorType {
+  VISITOR
+  STAFF
+  SYSTEM
+}
+
 /// One entry in a visit's own timeline. These are append-only and describe what
 /// happened, whereas `VisitStatus` describes where the visit ended up — a visit
 /// that stepped out and came back is ACTIVE again, but still carries its
@@ -41,6 +111,41 @@ enum VisitEventType {
   STEP_OUT
   RETURN
   CHECK_OUT
+  /// The stale-visit cleanup closed the visit because nobody checked it out.
+  /// Its timestamp is the computed closing time, not an observed departure.
+  AUTO_CLOSE
+}
+
+/// How a visit began. Null on visits recorded before this column existed,
+/// except where the backfill could tell (appointment-linked visits and
+/// deliveries).
+enum CheckInMethod {
+  /// The kiosk walk-in form.
+  WALK_IN
+  /// An appointment's QR code or reference number (kiosk, guard scanner or
+  /// the staff list's one-click check-in).
+  APPOINTMENT
+  /// A courier drop-off logged by a guard.
+  DELIVERY
+  /// A visitor pass scanned at the kiosk or by a guard — whether it then
+  /// redeemed an appointment or created an express walk-in.
+  PASS
+}
+
+/// A visitor pass is either usable or withdrawn. Expiry is not a status: it is
+/// read from `expiresAt`, so renewing on use needs no state change.
+enum VisitorPassStatus {
+  ACTIVE
+  REVOKED
+}
+
+/// Why a pass exists.
+enum PassIssueReason {
+  /// Issued automatically once the profile reached the recurring-visit
+  /// threshold (`RECURRING_VISITS_THRESHOLD` within `RECURRING_WINDOW_DAYS`).
+  RECURRING_AUTO
+  /// Issued by a staff member from /dashboard/visitors.
+  STAFF_ISSUED
 }
 
 /// Where a visit sits in its lifecycle. PENDING_RETURN is the middle state: the
@@ -84,6 +189,12 @@ model User {
   /// removing a staff account never removes a visit.
   visitsCheckedOut Visit[] @relation("VisitCheckedOutBy")
 
+  /// Appointment changes this staff member made.
+  appointmentEvents AppointmentEvent[]
+
+  /// Visitor passes this staff member revoked.
+  revokedPasses VisitorPass[]
+
   @@map("user")
 }
 
@@ -91,6 +202,7 @@ model Host {
   id         String @id @default(cuid())
   name       String
   department String
+  email      String?
 
   /// Whether the host still takes visitors. This is a soft delete, and it is
   /// not optional politeness: `Visitor.hostId` cascades on delete, so removing
@@ -106,6 +218,19 @@ model Host {
   @@map("host")
 }
 
+// TODO(multi-tenancy): add organizationId and scope export audit writes/reads.
+/// Export audit retained independently of staff account deletion.
+model ExportLog {
+  id        String   @id @default(cuid())
+  userId    String
+  filters   Json
+  rowCount  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@map("export_log")
+}
+
 // TODO(multi-tenancy): add organizationId FK here and scope all queries below by it once multi-tenancy is implemented.
 /// The admin-configurable list behind every "purpose of visit" dropdown.
 ///
@@ -115,7 +240,7 @@ model Host {
 /// option that anything references cannot be removed even by hand.
 model PurposeOption {
   id        String   @id @default(cuid())
-  label     String   @unique
+  label     String
   isActive  Boolean  @default(true)
   sortOrder Int      @default(0)
   createdAt DateTime @default(now())
@@ -125,6 +250,9 @@ model PurposeOption {
 
   /// Every dropdown asks the same question: active options, in display order.
   @@index([isActive, sortOrder])
+  /// The lower(trim(label)) uniqueness rule is a functional SQL index in the
+  /// migration because Prisma schema indexes cannot express that expression.
+  @@index([label])
   @@map("purpose_option")
 }
 
@@ -214,15 +342,37 @@ model Visit {
   checkedOutBy     User?   @relation("VisitCheckedOutBy", fields: [checkedOutById], references: [id], onDelete: SetNull)
   checkedOutByName String?
 
+  /// True when the stale-visit cleanup closed this visit rather than a person.
+  /// A dedicated flag because a null `checkedOutByName` cannot say this on its
+  /// own: every checkout before attribution existed is unattributed too. When
+  /// set, `checkOutTime` is the configured auto-close time, not a departure,
+  /// so no time on site is shown for the visit.
+  closedAutomatically Boolean @default(false)
+
   createdAt DateTime @default(now())
 
   events VisitEvent[]
+
+  /// The appointment this visit redeemed, if it came from one.
+  appointment Appointment?
+
+  /// The returning-visitor profile this visit belongs to: set for appointment
+  /// check-ins (from the appointment's linked profile) and pass check-ins.
+  /// Null for anonymous walk-ins and deliveries. What the recurring-visit count
+  /// reads. `SetNull` so removing a profile never removes a visit.
+  visitorProfileId String?
+  visitorProfile   VisitorProfile? @relation(fields: [visitorProfileId], references: [id], onDelete: SetNull)
+
+  /// How the visit began. See `CheckInMethod`.
+  checkInMethod CheckInMethod?
 
   @@index([visitorId])
   @@index([checkedInBy])
   @@index([checkOutTime])
   @@index([status])
   @@index([checkedOutById])
+  @@index([visitorProfileId, checkInTime])
+  @@index([checkInTime, id])
   @@map("visit")
 }
 
@@ -311,14 +461,58 @@ model Appointment {
   /// booking API refuses new bookings without it.
   consentAcceptedAt DateTime?
 
+  /// Set together with `status: CANCELLED`. Null on appointments cancelled
+  /// before these columns existed.
+  cancelledAt  DateTime?
+  cancelledBy  CancelledBy?
+  /// Optional free text from whoever cancelled.
+  cancelReason String?
+
+  /// The visit this appointment turned into when it was checked in. `SetNull`
+  /// so deleting a visit never deletes the booking it came from; `@unique`
+  /// because one appointment redeems exactly once.
+  visitId String? @unique
+  visit   Visit?  @relation(fields: [visitId], references: [id], onDelete: SetNull)
+
+  events AppointmentEvent[]
+
   createdAt DateTime @default(now())
 
+  /// The partial unique index for PENDING host/time slots is SQL-managed in
+  /// migrations because Prisma does not represent partial indexes here.
   @@index([hostId])
   @@index([status])
   @@index([purposeId])
   @@index([visitorProfileId])
   @@index([scheduledFor])
   @@map("appointment")
+}
+
+/// An append-only log of changes to one appointment, written in the same
+/// transaction as the change. `detail` holds the old and new values where there
+/// are any (e.g. `{ from: { scheduledFor }, to: { scheduledFor } }`) — never a
+/// QR token, which is a bearer credential.
+model AppointmentEvent {
+  id String @id @default(cuid())
+
+  appointmentId String
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  type      AppointmentEventType
+  actorType AppointmentActorType
+
+  /// The staff member, when `actorType` is STAFF. `SetNull` so removing an
+  /// account keeps the history.
+  actorUserId String?
+  actorUser   User?   @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  detail Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([appointmentId, createdAt])
+  @@index([actorUserId])
+  @@map("appointment_event")
 }
 
 /// A person who books visits, identified by email across bookings. Powers the
@@ -340,12 +534,58 @@ model VisitorProfile {
   email     String
   phone     String?
 
+  /// When this profile first reached the recurring-visit threshold. Set once,
+  /// by the automatic issuance check after a check-in; never cleared.
+  recurringSince DateTime?
+
   createdAt DateTime @default(now())
 
   appointments Appointment[]
+  visits       Visit[]
+  passes       VisitorPass[]
 
   @@unique([email, nameKey])
   @@map("visitor_profile")
+}
+
+/// A persistent QR credential for one profile — a bearer token, like a ticket.
+///
+/// The token itself is never stored. The QR reads `vp1.<id>.<mac>`, where the
+/// mac is an HMAC over this row's `id` and `version` (see `src/lib/pass-token.ts`),
+/// so it can be re-rendered at any time and is killed by bumping `version`
+/// (rotate) or setting `status: REVOKED`.
+///
+/// At most one ACTIVE pass per profile, enforced by the partial unique index
+/// `visitor_pass_one_active_per_profile` (raw SQL in the migration — Prisma
+/// cannot express a partial index in the schema).
+model VisitorPass {
+  id String @id @default(cuid())
+
+  profileId String
+  profile   VisitorProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  /// Part of the signed message. Bumped by rotate, which invalidates every QR
+  /// rendered for an earlier version.
+  version Int @default(1)
+
+  status      VisitorPassStatus @default(ACTIVE)
+  issueReason PassIssueReason
+
+  issuedAt  DateTime @default(now())
+  /// Pushed forward to `now + PASS_VALID_DAYS` on every successful use, so a
+  /// pass only lapses after that long without a visit.
+  expiresAt DateTime
+  lastUsedAt DateTime?
+
+  revokedAt       DateTime?
+  /// The staff member who revoked it. Null when the system did (an expired
+  /// pass retired so a new one could be issued) or when the account is gone.
+  revokedByUserId String?
+  revokedBy       User?     @relation(fields: [revokedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([profileId])
+  @@index([revokedByUserId])
+  @@map("visitor_pass")
 }
 
 /// A one-time code emailed to prove ownership of an address before the

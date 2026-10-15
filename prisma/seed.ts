@@ -173,11 +173,18 @@ async function main() {
   // re-orders a default an admin had hidden or moved, without creating a
   // duplicate or disturbing the options the backfill created.
   for (const option of purposeOptions) {
-    await prisma.purposeOption.upsert({
-      where: { label: option.label },
-      update: { sortOrder: option.sortOrder, isActive: true },
-      create: option,
+    const existing = await prisma.purposeOption.findFirst({
+      where: { label: { equals: option.label, mode: "insensitive" } },
+      select: { id: true },
     });
+    if (existing) {
+      await prisma.purposeOption.update({
+        where: { id: existing.id },
+        data: { label: option.label, sortOrder: option.sortOrder, isActive: true },
+      });
+    } else {
+      await prisma.purposeOption.create({ data: option });
+    }
   }
 
   for (const host of hosts) {
@@ -198,8 +205,8 @@ async function main() {
       throw new Error(`Seed host "${hostName}" not found for ${appointment.referenceNumber}`);
     }
 
-    const purpose = await prisma.purposeOption.findUnique({
-      where: { label: purposeLabel },
+    const purpose = await prisma.purposeOption.findFirst({
+      where: { label: { equals: purposeLabel, mode: "insensitive" } },
     });
 
     if (!purpose) {
