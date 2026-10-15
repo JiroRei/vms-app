@@ -7,12 +7,21 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "db:migrate": "prisma migrate dev",
-    "db:seed": "prisma db seed",
-    "db:studio": "prisma studio",
+    "db:migrate": "prisma migrate dev --config prisma7.config.ts",
+    "db:seed": "prisma db seed --config prisma7.config.ts",
+    "db:studio": "prisma studio --config prisma7.config.ts",
+    "db:repair-auto-closed": "node --import tsx --conditions=react-server prisma/repair-auto-closed-visits.ts",
     "test": "node --import tsx --import ./tests/setup.ts --conditions=react-server --test --test-concurrency=1 tests/*.test.ts",
-    "test:migrate": "tsx tests/migrate.ts",
-    "postinstall": "prisma generate"
+    "test:migrate": "node --import tsx tests/migrate.ts",
+    "test:e2e": "node --import tsx scripts/run-e2e.ts",
+    "db:backup": "node --import tsx scripts/backup.ts",
+    "db:restore": "node --import tsx scripts/restore.ts",
+    "test:pass-token": "node --import tsx --test tests/pass-token.test.ts",
+    "postinstall": "prisma generate --config prisma7.config.ts",
+    "typecheck": "node node_modules/next/dist/bin/next typegen && node node_modules/typescript/bin/tsc --noEmit",
+    "test:http:reporting": "node --import tsx --conditions=react-server tests/verify-reporting-http.ts",
+    "test:http:booking-pass": "node --import tsx --conditions=react-server tests/verify-booking-pass-http.ts",
+    "test:http:password-reset": "node --import tsx --conditions=react-server tests/verify-password-reset-http.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",
@@ -31,6 +40,7 @@
     "server-only": "^0.0.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/pg": "^8.23.1",

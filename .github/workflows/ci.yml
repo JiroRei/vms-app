@@ -1,0 +1,57 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: vms
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/vms?schema=public
+      DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/vms?schema=e2e
+      BETTER_AUTH_SECRET: ci-only-auth-secret-at-least-32-characters
+      BETTER_AUTH_URL: http://127.0.0.1:3100
+      BOOKING_VERIFY_SECRET: ci-only-booking-secret-at-least-32-characters
+      PASS_SECRET: ci-only-pass-secret-at-least-32-characters
+      CRON_SECRET: ci-only-cron-secret
+      RESEND_API_KEY: dummy-key-never-used-in-test-mode
+      APPOINTMENT_FROM_EMAIL: visits@example.invalid
+      EMAIL_MODE: test
+      NEXT_PUBLIC_SITE_TIMEZONE: Asia/Manila
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - run: bun install --frozen-lockfile
+      - run: bunx --bun prisma migrate deploy --config prisma7.config.ts
+      - run: bun run test:migrate
+      - run: bun run typecheck
+      - run: bun run lint
+      - run: bun run test
+      - run: bun run build
+      - run: bunx playwright install --with-deps chromium
+      - run: bun run test:e2e
+      - run: node --import tsx --conditions=react-server scripts/audit-e2e-isolation.ts
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
