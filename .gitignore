@@ -12,9 +12,19 @@
 
 # testing
 /coverage
+/test-results/
+/playwright-report/
+/backups/
+/logs/
 
-# next.js
-/.next/
+# Audit screenshots. They show seeded people with real-looking names and email
+# addresses, so they stay local and are not committed.
+/docs/screens/
+
+# next.js. Covers every NEXT_DIST_DIR (.next, .next-e2e, ...). Build
+# directories hold Turbopack's binary cache, which Tailwind would otherwise
+# scan for class names.
+/.next*/
 /out/
 
 # production
