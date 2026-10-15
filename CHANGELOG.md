@@ -6,6 +6,105 @@ For the current state of the project rather than its history, see
 
 ---
 
+## 2026-10-15 - Seed safety, kiosk approval and staff site times
+
+- **M-02:** share schema-aware pg adapter construction between app and seed.
+  Seed prints its target, refuses existing staff without `--force`, and creates
+  only missing records, preserving credentials and operator edits. Verified in
+  a clean scratch schema with development snapshots unchanged; scratch dropped.
+  Direct Prisma seed invocation also works (`node --import tsx`). Test resets
+  check the client target; e2e fixtures are cleared even after failed runs.
+- **M-03:** unknown devices are PENDING; admin Approve/Dismiss controls live
+  under Unconfirmed devices. Only approved devices affect monitoring. Added a
+  5/IP/hour creation limit, a concurrency-safe cap of 20 pending devices, and
+  seven-day expiry sweeps. The migration approves only existing devices seen
+  within 24 hours and retires the rest. Kiosk timestamps use the site zone.
+- **M-04:** staff create/reschedule send site wall-clock values to the server
+  and reuse booking's zone conversion. Removed the duplicate offset function
+  and unused device-local helpers. Added browser checks in UTC and Los Angeles
+  for 10:00 scheduling/rescheduling and history date boundaries.
+- **Cleanup:** deactivated five referenced `[test]` purpose options in dev;
+  no unused matching purposes needed deletion. Corrected STATUS.md and updated
+  APP_MAP/KNOWN_ISSUES. The pg deprecation traces to Prisma's internal parallel
+  transaction queries; it remains open because a fix requires dependency or
+  adapter work rather than a trivial application change.
+- **Validation:** see the current verification table in STATUS.md. Unit and
+  e2e suites share the isolated test schema and must run sequentially.
+
+
+## 2026-10-15 — Access control, rate limits, email secrets, auth secret
+
+Fixes KNOWN_ISSUES B-01, M-01, M-05, C-01, N-06, N-07, N-10 and N-13.
+
+- **Baseline commits (C-01).** The six untracked migrations, the CI workflow,
+  and the untracked source, tests and scripts were committed in six commits on
+  `staging` (`6bcf2f1`..`437ec05`). `docs/screens/` is now gitignored (its
+  screenshots show real-looking personal details). A fresh clone of that
+  commit installs, applies all 22 migrations to an empty schema and builds.
+  The push to `origin` was blocked by a permission check and still has to be
+  done.
+- **Authentication on every page and data path (B-01, N-06, N-07).**
+  - `requireStaff()` / `requireAdmin()` in `src/lib/session.ts` are called at
+    the top of every dashboard page; the layout's check now only decides the
+    shell.
+  - Staff data is read through guarded loaders in `src/lib/staff-data.ts`,
+    each of which checks the session itself. An ESLint rule stops `src/app`
+    and `src/components` importing the unguarded functions, and stops pages,
+    layouts and components importing Prisma.
+  - Route handlers use `requireStaffApi()` / `requireAdminApi()`
+    (`src/lib/api-auth.ts`); anonymous export now gets 401.
+  - New `src/proxy.ts`: anonymous `/dashboard/**` requests (including RSC)
+    are redirected to /login before rendering; guards get a 403 page on the
+    admin pages.
+  - `tests/e2e/access-matrix.spec.ts` builds the route list from `src/app`,
+    fails on any route not classified in `tests/access-matrix.ts`, and checks
+    every route as anonymous (document, RSC with `Next-Router-State-Tree`,
+    plain fetch), guard and admin. Before: 29 violations (including seeded
+    visitor data in the body of anonymous 307s from three pages, which the
+    audit had not caught). After: 0.
+- **Rate limits (M-01).**
+  - `getClientIp()` (`src/lib/client-ip.ts`) is the only source of caller
+    addresses. New `TRUSTED_PROXY_COUNT` (default 0): forwarding headers are
+    ignored and the connection address is used; with N proxies, the Nth
+    `X-Forwarded-For` entry from the right. Better Auth's limiter reads the
+    same value through a header the auth route sets.
+  - The app now starts through `server.mjs` (`dev`, `start` and the e2e server),
+    which records each request's socket address with a per-process nonce;
+    Next.js does not expose the socket to route handlers.
+  - Address-independent second limits: per email (code requests, code
+    checks, sign-in), per reference number plus a global ceiling (kiosk
+    validation and check-in), per device (heartbeat), per account (password
+    change). Booking already had a per-email limit.
+  - The kiosk's typed reference number now needs the last name on the
+    booking; a wrong name is answered like an unknown code. Scanned QR codes,
+    pass check-ins and guard lookups are unchanged.
+- **Email outbox secrets (M-05, N-10).**
+  - Bodies are cleared once a message is sent, fails for good or expires;
+    only recipient, kind, status and timestamps remain (`bodyClearedAt`).
+  - Pass emails store the pass id and version; the QR is rendered at send
+    time and not at all if the pass was rotated or revoked meanwhile.
+  - Rows are deleted after 14 days (30 if failed) by the request sweep and
+    `/api/cron/process-email-outbox`.
+  - Migration `20261015090000_email_outbox_retention` adds the columns and
+    scrubbed existing rows (in the dev database: 2 of 3 rows cleared, 1 still
+    pending kept).
+  - The booking code is no longer in the subject line.
+  - The email log shows created and sent times, explains retention, and only
+    offers Retry while the content still exists.
+  - Logs: the sanitizer also redacts `token=`/`code=` query values, bearer
+    tokens and inline images; Better Auth logs go through it; the development
+    request log skips URLs with `token=`. `EMAIL_TEST_SINK` (test mode only)
+    lets the e2e tests read sent codes now that the outbox keeps none.
+- **Better Auth secret (N-13).** Generated values for `BETTER_AUTH_SECRET` and
+  `BETTER_AUTH_URL` in the local `.env` (signs everyone out once).
+  `next build` and the production server refuse to start when the secret is
+  missing, Better Auth's default, the `.env.example` sample or shorter than 32
+  characters (`src/lib/auth-secret.ts`, checked from `next.config.ts`).
+- **Verification.** Unit tests 124/124; Playwright 15/15; typecheck pass;
+  lint 0 errors (1 existing warning in `src/test.ts`); production build pass
+  with no Better Auth default-secret errors; build and start verified to fail
+  for a missing, default and sample secret.
+
 ## 2026-10-14 — Tailwind CSS parse failure
 
 - Fixed "Parsing CSS source code failed" in `src/app/globals.css`. Tailwind's

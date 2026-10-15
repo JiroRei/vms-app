@@ -1,8 +1,9 @@
 import Link from "next/link";
 
 import { dateKeyInZone } from "@/lib/booking-config";
-import { getSession } from "@/lib/session";
-import { getActiveVisits, getHosts } from "@/lib/visits";
+import { requireStaff } from "@/lib/session";
+import { loadActiveVisits } from "@/lib/staff-data";
+import { getHosts } from "@/lib/visits";
 
 import { CloseStaleVisits } from "./close-stale-visits";
 import { LiveCheckIns } from "./live-check-ins";
@@ -10,13 +11,10 @@ import { LogDelivery } from "./log-delivery";
 import { StatCards } from "./stat-cards";
 
 export default async function DashboardPage() {
-  // The session guard lives in `src/app/dashboard/layout.tsx`, which redirects
-  // to /login before this renders.
-  const [visits, hosts, session] = await Promise.all([
-    getActiveVisits(),
-    getHosts(),
-    getSession(),
-  ]);
+  // Checked here, not only in the layout: a page renders in parallel with its
+  // layout, so the layout's redirect does not stop this page's data.
+  const session = await requireStaff();
+  const [visits, hosts] = await Promise.all([loadActiveVisits(), getHosts()]);
 
   // The building's calendar day, so the "today" links land on the same day the
   // stats endpoint counts.
@@ -55,7 +53,7 @@ export default async function DashboardPage() {
 
             {/* Bulk-rewrites historical records, so admins only. The API
                 enforces this too — hiding the button is not the control. */}
-            {session?.role === "ADMIN" && <CloseStaleVisits />}
+            {session.role === "ADMIN" && <CloseStaleVisits />}
           </div>
         </div>
       </div>

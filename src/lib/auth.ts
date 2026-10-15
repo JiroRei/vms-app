@@ -17,6 +17,8 @@ import { prismaAdapter } from "better-auth/adapters/prisma";
 import { nextCookies } from "better-auth/next-js";
 import { after } from "next/server";
 
+import { CLIENT_IP_HEADER } from "@/lib/client-ip";
+import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { sendPasswordResetEmail } from "@/lib/email";
 
@@ -72,6 +74,14 @@ export const auth = betterAuth({
     updateAge: 60 * 60,
   },
 
+  advanced: {
+    ipAddress: {
+      // Set by the /api/auth route from getClientIp(), never by the client
+      // (KNOWN_ISSUES M-01). The default, X-Forwarded-For, is client-controlled.
+      ipAddressHeaders: [CLIENT_IP_HEADER],
+    },
+  },
+
   rateLimit: {
     // Better Auth only rate-limits in production by default. Turning it on
     // everywhere means the limit is exercised in development too, rather than
@@ -84,6 +94,12 @@ export const auth = betterAuth({
       // known emails, so cap attempts well below what a password spray needs.
       "/sign-in/email": { window: 60, max: 5 },
     },
+  },
+
+  // Through the app logger, so Better Auth's messages get the same redaction
+  // as everything else; extra arguments (request details) are dropped.
+  logger: {
+    log: (level, message) => (level === "error" ? logger.error : level === "warn" ? logger.warn : logger.info)(`[auth] ${message}`),
   },
 
   // Must stay last: `nextCookies` hooks every endpoint's response and replays

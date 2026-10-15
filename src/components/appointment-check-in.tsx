@@ -135,6 +135,13 @@ export function AppointmentCheckIn({ mode }: { mode: CheckInMode }) {
 
   const [stage, setStage] = useState<Stage>("capture");
   const [reference, setReference] = useState("");
+  /** Kiosk only: a typed reference number counts together with the booking's last name. */
+  const [lastName, setLastName] = useState("");
+  /**
+   * What the kiosk proved it holds, re-sent with the check-in: the scanned QR
+   * token, or the typed reference number and last name.
+   */
+  const [claim, setClaim] = useState<{ token: string; lastName: string } | null>(null);
   const [appointment, setAppointment] = useState<ValidatedAppointment | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -151,6 +158,8 @@ export function AppointmentCheckIn({ mode }: { mode: CheckInMode }) {
   function reset() {
     setStage("capture");
     setReference("");
+    setLastName("");
+    setClaim(null);
     setAppointment(null);
     setError(null);
     setPassToken(null);
@@ -206,7 +215,7 @@ export function AppointmentCheckIn({ mode }: { mode: CheckInMode }) {
    * The one path into the next step, whether the code arrived from the camera
    * or the keypad — so a scanned code and a typed one are checked identically.
    */
-  async function validate(token: string) {
+  async function validate(token: string, typedLastName = "") {
     if (busy) return;
 
     setBusy(true);
@@ -218,13 +227,17 @@ export function AppointmentCheckIn({ mode }: { mode: CheckInMode }) {
         return;
       }
 
-      const { response, data } = await postJson("/api/appointments/validate", { token });
+      const { response, data } = await postJson(
+        "/api/appointments/validate",
+        mode === "guard" ? { token, assisted: true } : { token, lastName: typedLastName },
+      );
 
       if (!response.ok) {
         setError(apiErrorMessage(data?.error) ?? "We could not find that appointment.");
         return;
       }
 
+      setClaim({ token: token.trim(), lastName: typedLastName });
       setAppointment(data.appointment as ValidatedAppointment);
       setStage("confirm");
     } catch {
@@ -242,7 +255,12 @@ export function AppointmentCheckIn({ mode }: { mode: CheckInMode }) {
       return;
     }
 
-    void validate(reference);
+    if (mode === "kiosk" && !lastName.trim()) {
+      setError("Please enter the last name used on the booking.");
+      return;
+    }
+
+    void validate(reference, lastName);
   }
 
   async function handleConfirm() {
@@ -253,11 +271,14 @@ export function AppointmentCheckIn({ mode }: { mode: CheckInMode }) {
 
     try {
       const { response, data } = await postJson("/api/appointments/check-in", {
-        // The reference number is re-sent rather than a scanned token: it
-        // resolves to the same appointment, and keeps the bearer token out of
-        // a second request. A pass is re-sent so the server can re-check it and
-        // record the visit as a pass check-in.
-        token: appointment.referenceNumber,
+        // A guard and a pass check-in send the reference number: the guard is
+        // signed in, and the pass is re-sent so the server can re-check it and
+        // record the visit as a pass check-in. The kiosk re-sends what it
+        // proved at lookup, the QR token or the reference number with the last
+        // name, because the server asks the same question again.
+        ...(passToken || mode === "guard" || !claim
+          ? { token: appointment.referenceNumber }
+          : claim),
         assisted: mode === "guard",
         ...(passToken ? { passToken } : {}),
       });
@@ -268,6 +289,7 @@ export function AppointmentCheckIn({ mode }: { mode: CheckInMode }) {
         setError(apiErrorMessage(data?.error) ?? "Could not complete check-in.");
         setStage("capture");
         setAppointment(null);
+        setClaim(null);
         setPassToken(null);
         return;
       }
@@ -613,6 +635,29 @@ export function AppointmentCheckIn({ mode }: { mode: CheckInMode }) {
           aria-invalid={Boolean(error)}
           className={`${error ? errorInputClass : inputClass} text-center text-lg font-semibold uppercase tracking-widest`}
         />
+        {mode === "kiosk" && (
+          <>
+            <label
+              htmlFor="reference-last-name"
+              className="block text-sm font-medium text-gray-700 dark:text-gray-200"
+            >
+              Last name used on the booking
+            </label>
+            <input
+              id="reference-last-name"
+              name="lastName"
+              type="text"
+              autoComplete="off"
+              value={lastName}
+              onChange={(event) => {
+                setLastName(event.target.value);
+                if (error) setError(null);
+              }}
+              aria-invalid={Boolean(error)}
+              className={`${error ? errorInputClass : inputClass} text-center text-lg`}
+            />
+          </>
+        )}
         <button type="submit" disabled={busy} className={secondaryButtonClass}>
           {busy ? "Looking up…" : "Continue"}
         </button>

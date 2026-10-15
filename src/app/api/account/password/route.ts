@@ -1,12 +1,12 @@
 import { logger } from "@/lib/logger";
 import { withApi } from "@/lib/api";
+import { requireStaffApi } from "@/lib/api-auth";
 import { APIError } from "better-auth/api";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 
 import { auth } from "@/lib/auth";
-import { clientIp, consumeRateLimit } from "@/lib/rate-limit";
-import { getSession } from "@/lib/session";
+import { consumeRateLimit } from "@/lib/rate-limit";
 import { MIN_PASSWORD_LENGTH } from "@/lib/staff";
 
 /**
@@ -26,14 +26,12 @@ const CHANGE_PASSWORD_LIMIT = { window: 60, max: 5 };
  * response to suspecting one is not yours any more.
  */
 async function POSTHandler(request: Request) {
-  const session = await getSession();
+  const session = await requireStaffApi();
 
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+  // Keyed by account rather than address: only a signed-in user gets here, so
+  // the account is the identity that matters (KNOWN_ISSUES M-01).
   const limit = consumeRateLimit(
-    `change-password:${clientIp(request.headers)}`,
+    `change-password:${session.userId}`,
     CHANGE_PASSWORD_LIMIT,
   );
 

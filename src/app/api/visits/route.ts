@@ -1,14 +1,16 @@
 import { logger } from "@/lib/logger";
 import { withApi } from "@/lib/api";
+import { requireStaffApi } from "@/lib/api-auth";
 import { after, NextResponse } from "next/server";
 
 import { parseNameParts } from "@/lib/names";
 import { prisma } from "@/lib/prisma";
 import { findSelectablePurpose } from "@/lib/purposes";
-import { clientIp, consumeRateLimit } from "@/lib/rate-limit";
-import { getSession } from "@/lib/session";
+import { getClientIp } from "@/lib/client-ip";
+import { consumeRateLimit } from "@/lib/rate-limit";
 import { notifyHostArrival } from "@/lib/host-notify";
-import { createWalkInVisit, getActiveVisits } from "@/lib/visits";
+import { loadActiveVisits } from "@/lib/staff-data";
+import { createWalkInVisit } from "@/lib/visits";
 
 /**
  * Sized for the busiest single kiosk rather than for one visitor: every check-in
@@ -24,14 +26,10 @@ const CHECK_IN_LIMIT = { window: 60, max: 20 };
  * dashboard session. The kiosk never calls it.
  */
 async function GETHandler() {
-  const session = await getSession();
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  await requireStaffApi();
 
   try {
-    const visits = await getActiveVisits();
+    const visits = await loadActiveVisits();
     return NextResponse.json({ visits });
   } catch (error) {
     logger.error("GET /api/visits failed", error);
@@ -55,7 +53,7 @@ async function GETHandler() {
  */
 async function POSTHandler(request: Request) {
   const limit = consumeRateLimit(
-    `check-in:${clientIp(request.headers)}`,
+    `check-in:${getClientIp(request.headers)}`,
     CHECK_IN_LIMIT,
   );
 

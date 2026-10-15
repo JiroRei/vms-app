@@ -25,7 +25,9 @@ import {
   createQrToken,
   createReferenceNumber,
   describeAppointmentFailure,
+  holderMatches,
   lifecycleFailure,
+  type AppointmentHolder,
   type AppointmentTokenFailure,
   type ValidatedAppointment,
 } from "@/lib/qr";
@@ -396,6 +398,8 @@ export async function redeemAppointment(
      * already confirmed owns the appointment).
      */
     viaPass?: { profileId: string } | null;
+    /** Kiosk self-service: a reference number also needs the last name. See `holderMatches`. */
+    holder?: AppointmentHolder;
   } = {},
 ): Promise<RedeemResult> {
   const trimmed = token.trim();
@@ -416,7 +420,7 @@ export async function redeemAppointment(
       include: DETAIL_INCLUDE,
     });
 
-    if (!appointment) {
+    if (!appointment || !holderMatches(appointment, trimmed, options.holder)) {
       return {
         status: "failed",
         reason: "NOT_FOUND",

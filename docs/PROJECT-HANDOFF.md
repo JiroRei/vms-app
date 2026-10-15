@@ -403,8 +403,8 @@ in the code mark the deployment-global settings that would need revisiting.
 
 | Command | Purpose |
 | --- | --- |
-| `npm run dev` | Start the Next.js development server |
-| `npm run build` / `npm run start` | Build and serve production |
+| `npm run dev` | Start the development server (`server.mjs --dev`) |
+| `npm run build` / `npm run start` | Build and serve production (`server.mjs`) |
 | `npm run lint` | Run ESLint |
 | `npm run typecheck` | Check TypeScript |
 | `npm run db:migrate` | Create/apply a development migration |

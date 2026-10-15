@@ -12,13 +12,21 @@ datasource db {
   // Prisma 7: the connection URL lives in `prisma7.config.ts`, not here.
 }
 
+enum KioskRegistrationStatus {
+  PENDING
+  APPROVED
+  RETIRED
+}
+
 model KioskDevice {
   id         String   @id @default(cuid())
   deviceId   String   @unique
   label      String?
+  registrationStatus KioskRegistrationStatus @default(PENDING)
   lastSeenAt DateTime @default(now())
   retiredAt  DateTime?
   createdAt  DateTime @default(now())
+  @@index([registrationStatus, lastSeenAt])
   @@map("kiosk_device")
 }
 
@@ -28,6 +36,13 @@ enum EmailStatus {
   FAILED
 }
 
+/// Outgoing email, persisted before sending so a crash cannot lose it.
+///
+/// Bodies can carry one-time codes, reset links and manage links, so they are
+/// kept only while the message may still be sent: `html`, `text` and
+/// `attachments` are emptied (and `bodyClearedAt` set) as soon as it is SENT,
+/// finally FAILED or expired. Rows are deleted after 14 days (30 when FAILED).
+/// See `src/lib/email-outbox.ts`.
 model EmailOutbox {
   id            String      @id @default(cuid())
   to            String
@@ -35,6 +50,11 @@ model EmailOutbox {
   html          String
   text          String
   attachments   Json        @default("[]")
+  /// Pass emails store the pass, not its QR: the image is rendered at send time
+  /// and only if the pass is still active at this version.
+  passId        String?
+  passVersion   Int?
+  bodyClearedAt DateTime?
   kind          String
   status        EmailStatus @default(PENDING)
   attempts      Int         @default(0)
@@ -45,6 +65,7 @@ model EmailOutbox {
   sentAt        DateTime?
   lockedUntil   DateTime?
   @@index([status, nextAttemptAt])
+  @@index([createdAt])
   @@map("email_outbox")
 }
 

@@ -1,22 +1,13 @@
-import { redirect } from "next/navigation";
-
-import { Role } from "@/generated/prisma/enums";
-import { getSession } from "@/lib/session";
-import { listStaff, MIN_PASSWORD_LENGTH } from "@/lib/staff";
+import { requireAdmin } from "@/lib/session";
+import { MIN_PASSWORD_LENGTH } from "@/lib/staff";
+import { loadStaffAccounts } from "@/lib/staff-data";
 
 import { StaffDirectory } from "./staff-directory";
 
 export default async function StaffPage() {
-  const session = await getSession();
-
-  // The layout has established there is a session; this is the role gate. The
-  // API enforces it too — neither this nor the hidden sidebar link is the
-  // control.
-  if (session?.role !== Role.ADMIN) {
-    redirect("/dashboard");
-  }
-
-  const staff = await listStaff();
+  // The API enforces the same rule; hiding the sidebar link is not the control.
+  const session = await requireAdmin();
+  const staff = await loadStaffAccounts();
 
   return (
     <div className="space-y-6">

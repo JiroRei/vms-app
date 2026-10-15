@@ -15,18 +15,42 @@ Priorities:
 
 ## Summary
 
+Still open (fixed items are marked **Fixed** below and listed in
+"Fixed on 2026-10-15"):
+
 | Category | Blocker | Major | Minor | Total |
 | --- | --- | --- | --- | --- |
-| Bugs | 1 | 5 | 15 | 21 |
+| Bugs | 0 | 0 | 9 | 9 |
 | Missing but expected | 0 | 2 | 6 | 8 |
-| Cleanup | 0 | 1 | 9 | 10 |
-| **Total** | **1** | **8** | **30** | **39** |
+| Cleanup | 0 | 0 | 9 | 9 |
+| **Total** | **0** | **2** | **24** | **26** |
+
+As found by the audit: Bugs 1/5/15 (21), Missing 0/2/6 (8), Cleanup 0/1/9
+(10), 39 in total.
+
+## Fixed on 2026-10-15
+
+B-01, M-01 through M-05 and C-01, plus N-04, N-06, N-07, N-10, N-11 and N-13. C-09/C-10 fixture cleanup is partially addressed. Details are in
+CHANGELOG.md (2026-10-15) and under each item.
+
+Access matrix, measured with `tests/e2e/access-matrix.spec.ts` against a
+production build seeded with the e2e fixtures: every page and API route found
+in `src/app` (70 routes, 394 cells), requested anonymously as a browser
+document, as an RSC request (`RSC: 1` with `Next-Router-State-Tree`) and as a
+plain fetch without cookies, then as a guard and as an admin.
+
+| Build | Rule violations | What failed |
+| --- | --- | --- |
+| Before (commit `437ec05`) | 29 | Anonymous RSC requests to all 12 dashboard pages returned 200 instead of a redirect. Anonymous document and plain requests to `/dashboard/appointments`, `/history` and `/visitors` returned 307 but the body still carried seeded visitor data (emails, reference number, names). Guards got 200 on the 4 admin pages (document and RSC). Anonymous `GET /api/visits/export` returned 403 instead of 401. |
+| After | 0 | Every anonymous request to a dashboard page is a 307 to /login with no data in the body; guards get 403 on admin pages and admin APIs; anonymous staff and admin APIs return 401. |
 
 ---
 
 ## Bugs
 
 ### B-01 (Blocker) Anonymous RSC requests read dashboard data
+
+**Fixed 2026-10-15.** Every dashboard page calls `requireStaff()` / `requireAdmin()` (`src/lib/session.ts`) before loading anything; staff data is read only through the guarded loaders in `src/lib/staff-data.ts` (an ESLint rule stops `src/app` importing the unguarded functions); `src/proxy.ts` redirects anonymous `/dashboard/**` requests to /login before rendering. The access matrix above is enforced by `tests/e2e/access-matrix.spec.ts`. The re-run also showed the leak was wider than recorded here: plain anonymous requests to three pages carried data in the body of their 307.
 
 - **Where:** `src/app/dashboard/layout.tsx` (the only session check) and the
   pages that rely on it: `src/app/dashboard/visitors/page.tsx`,
@@ -57,6 +81,8 @@ Priorities:
 
 ### M-01 (Major) Every rate limit can be bypassed with `X-Forwarded-For`
 
+**Fixed 2026-10-15.** `getClientIp()` (`src/lib/client-ip.ts`) ignores forwarding headers unless `TRUSTED_PROXY_COUNT` says how many proxies wrote them, and otherwise uses the connection address, which `server.mjs` records for every request. Every limiter, the login action, the kiosk heartbeat and Better Auth use it. Second limits: per email (booking, code requests and checks, sign-in), per reference number plus a global ceiling (kiosk validation and check-in), per device (heartbeat), per account (password change). The kiosk's typed reference number now needs the booking's last name. Covered by `tests/client-ip.test.ts`, `tests/kiosk-claim.test.ts` and two e2e tests.
+
 - **Where:** `src/lib/rate-limit.ts:105` `clientIp()` trusts the first
   `X-Forwarded-For` entry; used by all in-memory limits, the database limits
   in `src/lib/database-rate-limit.ts`, and the login action
@@ -69,6 +95,8 @@ Priorities:
   sensitive limits additionally by account/email/reference.
 
 ### M-02 (Major) Seed ignores `?schema=` and writes to `public`
+
+**Fixed 2026-10-15.** App and seed use `src/lib/database-config.ts`, which passes the URL schema to `PrismaPg`. The seed prints the database/schema/host before connecting, refuses any existing staff accounts unless `--force` is supplied, and creates only missing records. Existing identities (including passwords), purposes, hosts and appointments are never updated. `scripts/verify-seed.ts` migrated a clean scratch schema, exercised refusal and forced repeat runs after operator edits, checked development remained unchanged, then dropped the scratch schema. Test cleanup checks both the environment and the URL captured by the Prisma client; the e2e build, fixtures and server all target `e2e`, and the runner clears test rows in `finally`.
 
 - **Where:** `prisma/seed.ts:13` builds `new PrismaPg({ connectionString })`
   without the `{ schema }` option that `src/lib/prisma.ts` passes.
@@ -84,6 +112,8 @@ Priorities:
   or import the shared client.
 
 ### M-03 (Major) Any browser that opens `/check-in` becomes a permanent kiosk and triggers the offline alarm
+
+**Fixed 2026-10-15.** Unknown UUIDs register as `PENDING`. Only non-retired `APPROVED` devices affect the chip/banner; staff see an Unconfirmed devices section and admins can Approve or Dismiss. Dismissal retires the identity so later heartbeats cannot re-enrol it. Heartbeat creation is limited to 5 per client address/hour, pending rows are capped at 20 under a Postgres transaction lock, and pending devices unseen for 7 days are deleted on heartbeat/list sweeps. Migration `20261015100000_kiosk_approval` approved only existing non-retired devices seen in the last 24 hours and retired the rest. Service and browser tests cover concurrency, expiry, approval, dismissal and creation limits.
 
 - **Where:** `src/app/check-in/kiosk-heartbeat.tsx` (random id in
   `localStorage`, heartbeat every 30 s), `src/app/api/kiosk/heartbeat/route.ts`
@@ -101,6 +131,8 @@ Priorities:
 
 ### M-04 (Major) Staff "new appointment" uses the staff device's time zone
 
+**Fixed 2026-10-15.** Staff create and reschedule send `YYYY-MM-DDTHH:mm` site wall-clock values; `parseStaffSchedule` uses the booking page's `zonedTimeToUtc` on the server, retaining staff's ability to choose any future minute. Both controls name the site zone. Rescheduling uses the shared site formatter and its duplicated offset helper was removed. Unused device-local date helpers were removed. History/CSV and register filters already use site-midnight boundaries; regression tests now exercise those boundaries and create/reschedule 10:00 appointments with Chromium set to UTC and America/Los_Angeles.
+
 - **Where:** `src/app/dashboard/appointments/appointment-manager.tsx:155`
   sends `new Date(datetimeLocal).toISOString()` (browser zone);
   `src/app/api/appointments/manage/route.ts:74` stores it. By contrast staff
@@ -115,6 +147,8 @@ Priorities:
   duplicated `zoneOffset` helper.
 
 ### M-05 (Major) One-time codes, reset links and pass credentials are stored in plaintext indefinitely
+
+**Fixed 2026-10-15.** Bodies (`html`, `text`, `attachments`) are cleared as soon as a message is sent, fails for good or expires; pass emails store only the pass id and version and render the QR at send time; rows are purged after 14 days (30 if failed) by the request sweep and the cron job. Migration `20261015090000_email_outbox_retention` scrubbed existing rows. Log output is redacted for codes, `token=` links, pass tokens, bearer tokens and inline images, and Better Auth logs go through the same sanitizer. Covered by `tests/pass-email.test.ts`.
 
 - **Where:** `src/lib/email-outbox.ts:45` stores the full `html`, `text` and
   base64 `attachments` of every email; nothing deletes `email_outbox` rows.
@@ -159,6 +193,8 @@ Priorities:
 
 ### N-04 (Minor) Kiosk monitor "last seen" uses device locale and zone
 
+**Fixed 2026-10-15.** Uses the shared site-zone `formatDateTime`.
+
 - **Where:** `src/app/dashboard/kiosk-monitor.tsx:45` `toLocaleString()`.
 - **Fix:** use `formatDateTime` from `src/lib/dates.ts`.
 
@@ -174,12 +210,16 @@ Priorities:
 
 ### N-06 (Minor) Anonymous export returns 403 instead of 401
 
+**Fixed 2026-10-15** (`requireAdminApi`).
+
 - **Where:** `src/app/api/visits/export/route.ts:10`.
 - **Evidence:** access matrix: anonymous `GET /api/visits/export` gives 403;
   every other staff route gives 401.
 - **Fix:** return 401 when there is no session.
 
 ### N-07 (Minor) Admin pages answer guards with 200 and a meta refresh
+
+**Fixed 2026-10-15.** `src/proxy.ts` answers guards with a 403 page before rendering.
 
 - **Where:** `redirect("/dashboard")` inside `hosts`, `staff`, `email-log`,
   `settings/purposes` pages runs after the layout has started streaming.
@@ -205,10 +245,14 @@ Priorities:
 
 ### N-10 (Minor) Booking code is in the email subject
 
+**Fixed 2026-10-15.** Subject is "Your booking code"; existing outbox subjects were rewritten by the retention migration.
+
 - **Where:** `src/lib/email.ts:428` `Your booking code is ${code}`.
 - **Fix:** keep the code in the body only (lock-screen previews show subjects).
 
 ### N-11 (Minor) `prisma db seed` only works through the package script
+
+**Fixed 2026-10-15.** Seed command is `node --import tsx prisma/seed.ts`; direct CLI invocation was verified on the scratch schema.
 
 - **Where:** `prisma7.config.ts:12` `seed: "tsx prisma/seed.ts"`.
 - **Evidence:** `node node_modules/prisma/build/index.js db seed` failed with
@@ -224,6 +268,8 @@ Priorities:
 
 ### N-13 (Minor) Local environment lacks `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL`
 
+**Fixed 2026-10-15.** Both are set in the local `.env` (generated secret). `next build` and the production server now refuse to start when the secret is missing, Better Auth's default or the `.env.example` sample (`src/lib/auth-secret.ts`); the production build no longer logs the default-secret error.
+
 - **Evidence:** the production build logged 21 × `BetterAuthError: You are
   using the default secret` and 21 × `Base URL is not set`. `.env` still says
   Better Auth is "scaffolded, not active yet" although it is the live auth
@@ -235,8 +281,7 @@ Priorities:
 - **Evidence:** `DeprecationWarning: Calling client.query() when the client is
   already executing a query is deprecated and will be removed in pg@9.0`
   appeared in the unit run, the e2e web server and the audit server.
-- **Fix:** trace with `--trace-deprecation`; likely parallel queries on an
-  interactive transaction client.
+- **Investigation 2026-10-15:** `--trace-deprecation` points to `PgTransaction.performIO` in `@prisma/adapter-pg` and parallel child queries in Prisma's `query-interpreter.ts:261`, including nested writes. Application transaction callbacks already await queries sequentially. A dependency change or transaction adapter serialization is needed; this is not a trivial local query fix, so the warning remains open.
 
 ### N-16 (Minor) Seed data is internally inconsistent
 
@@ -309,6 +354,8 @@ Priorities:
 ## Cleanup
 
 ### C-01 (Major) Most recent work is not in git
+
+**Fixed 2026-10-15** in six commits on `staging` (`6bcf2f1`..`437ec05`); a fresh clone installs, applies all 22 migrations to an empty schema and builds. Not yet pushed: the push was blocked by a permission check in the session that made the commits.
 
 - `git status` lists as untracked: 6 of 21 migrations
   (`20261012013401` to `20261013100000`), `.github/` (CI), `playwright.config.ts`,
@@ -414,15 +461,15 @@ Priorities:
 
 ### C-09 (Minor) Stale documentation and comments
 
-- `STATUS.md` reports 102 unit tests; the suite now has 106.
-- `STATUS.md` says development holds no test fixtures; the dev database has
-  25 active purpose options including `[test] Audit`, `[test] Delivery`, etc.,
-  all shown on the public kiosk and booking dropdowns.
+- **Fixed 2026-10-15:** updated the test counts and fixture claim in `STATUS.md`.
+- **Partially fixed 2026-10-15:** corrected the fixture claim in `STATUS.md`. Five referenced `[test]` purposes were deactivated in development (zero unused options to delete), preserving historical references while removing them from public dropdowns. Other stale comments remain below.
 - `walkin-form.tsx:160` comment says nothing sends a notification; host
   arrival emails now exist.
 - `.env` Better Auth comment (N-13); `site-config.ts` `AUTO_CLOSE_TIME` comment (N-08).
 
 ### C-10 (Minor) Development database leftovers
+
+**Partially fixed 2026-10-15.** Five referenced `[test]` purposes were deactivated (none unused to delete), and stale kiosk browsers were retired by the approval migration. The other audit leftovers listed below remain.
 
 - `[test] …` and other one-off purpose options (above), one stale kiosk device
   (permanent offline banner), `admin@geosense.biz` with no credential ("cannot
@@ -433,6 +480,16 @@ Priorities:
 
 ## Health check results
 
+**Operational re-check 2026-10-15:** 130 unit/service tests and all 18 Chromium
+tests passed; production build, TypeScript and lint passed (two existing
+unused-variable warnings in `src/test.ts`). The seed verification scratch
+schema was dropped; all 18 isolated test tables were verified empty, with no
+E2E staff/profile/appointment fixtures in development. Five referenced `[test]`
+purposes are inactive. The kiosk migration retained three approved devices and
+retired one older browser; its UTC cutoff was verified with 23/25-hour devices
+under a non-UTC database session. The `pg` warning remains as described in N-14.
+The table below retains the original audit evidence where not explicitly updated.
+
 Commands were run on Windows 11, Node 26.10.0, bun 1.4.0, PostgreSQL on
 `localhost:5432`.
 
@@ -440,8 +497,8 @@ Commands were run on Windows 11, Node 26.10.0, bun 1.4.0, PostgreSQL on
 | --- | --- | --- |
 | Typecheck | `bun run typecheck` | Pass (exit 0, 32 s). |
 | Lint | `bun run lint` | Pass, no warnings (exit 0, 2 m 38 s). |
-| Unit tests | `bun run test` | 106 tests in 25 suites: 106 pass, 0 fail, 0 skipped (43 s). Warnings: one `pg` `DeprecationWarning` (N-14); expected `Email delivery failed` logs from the retry tests. |
-| Playwright | `bun run test:e2e` | 11 passed, 0 failed (tests 1.5 m; with build 4 m 23 s). Warnings: Tailwind CSS optimiser warning (since fixed, see CHANGELOG 2026-10-14), `pg` deprecation. |
+| Unit tests | `bun run test` | 106 tests in 25 suites: 106 pass, 0 fail, 0 skipped (43 s); 130 of 130 after the operational fixes (26 suites, zero skips). Warnings: one `pg` `DeprecationWarning` (N-14); expected `Email delivery failed` logs from the retry tests. |
+| Playwright | `bun run test:e2e` | 11 passed, 0 failed (tests 1.5 m; with build 4 m 23 s). Warnings: Tailwind CSS optimiser warning (since fixed, see CHANGELOG 2026-10-14), `pg` deprecation. Re-run 2026-10-15 after the fixes: 15 passed, 0 failed. |
 | Production build | `NEXT_DIST_DIR=.next-audit next build` | Pass (1 m 38 s, 42 static pages). 21 × `BetterAuthError` default secret, 21 × base URL not set (N-13). The build also rewrote `tsconfig.json` to include the new dist dir; that edit was reverted. |
 | Schema validate | `prisma validate` | Valid. |
 | Migrate status (dev) | `prisma migrate status` | 21 migrations found, database schema up to date. |

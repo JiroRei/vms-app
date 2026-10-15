@@ -6,7 +6,7 @@
  * failure points at one test rather than at whichever test happened to run
  * before it.
  */
-import { prisma } from "@/lib/prisma";
+import { prisma, prismaDatabaseUrl } from "@/lib/prisma";
 import { randomUUID } from "node:crypto";
 import type { AppointmentStatus } from "@/generated/prisma/enums";
 import { appointmentExpiry } from "@/lib/qr";
@@ -21,7 +21,7 @@ import { assertTestDatabase } from "./test-database";
  * deliberate schema decision.
  */
 export async function resetDatabase(): Promise<void> {
-  assertTestDatabase();
+  assertTestDatabase(prismaDatabaseUrl);
   await prisma.emailOutbox.deleteMany();
   await prisma.kioskDevice.deleteMany();
   await prisma.rateLimitBucket.deleteMany();

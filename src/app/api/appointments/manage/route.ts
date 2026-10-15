@@ -1,5 +1,7 @@
+import { parseStaffSchedule } from "@/lib/booking-config";
 import { logger } from "@/lib/logger";
 import { withApi } from "@/lib/api";
+import { requireStaffApi } from "@/lib/api-auth";
 import { after, NextResponse } from "next/server";
 
 import { appBaseUrl } from "@/lib/appointment-access";
@@ -11,7 +13,6 @@ import {
 import { parseNameParts } from "@/lib/names";
 import { prisma } from "@/lib/prisma";
 import { findSelectablePurpose } from "@/lib/purposes";
-import { getSession } from "@/lib/session";
 
 const MAX_EMAIL = 200;
 const MAX_PHONE = 40;
@@ -29,11 +30,7 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
  * public booking slots, because the desk may need to fit someone in.
  */
 async function POSTHandler(request: Request) {
-  const session = await getSession();
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const session = await requireStaffApi();
 
   let body: unknown;
 
@@ -69,9 +66,7 @@ async function POSTHandler(request: Request) {
   if (!purposeId) fieldErrors.purposeId = "Please choose the purpose of the visit.";
   if (!hostId) fieldErrors.hostId = "Please choose who they are here to see.";
 
-  // An ISO instant from the browser. Required: the appointment's expiry is
-  // derived from it, and the kiosk turns a lapsed one away.
-  const scheduled = rawSchedule ? new Date(rawSchedule) : null;
+  const scheduled = parseStaffSchedule(rawSchedule);
 
   if (!scheduled || Number.isNaN(scheduled.getTime())) {
     fieldErrors.scheduledFor = "Please choose when they are expected.";

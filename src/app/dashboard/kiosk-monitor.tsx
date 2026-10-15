@@ -1,9 +1,10 @@
 "use client";
 import Link from "next/link";
+import { formatDateTime } from "@/lib/dates";
 import { useCallback, useEffect, useState } from "react";
 import { kioskStatus, KIOSK_ALERT_MS } from "@/lib/kiosks";
 import { apiErrorMessage } from "@/lib/api-error-message";
-type Device = { id: string; label: string | null; lastSeenAt: string; retiredAt: string | null };
+type Device = { registrationStatus: "PENDING" | "APPROVED" | "RETIRED"; id: string; label: string | null; lastSeenAt: string; retiredAt: string | null };
 export function KioskMonitor({ admin }: { admin: boolean }) {
   const [devices, setDevices] = useState<Device[]>([]);
   const [now, setNow] = useState(0);
@@ -19,14 +20,15 @@ export function KioskMonitor({ admin }: { admin: boolean }) {
     } catch { setAvailable(false); }
   }, []);
   useEffect(() => { const initial = setTimeout(refresh, 0); const timer = setInterval(refresh, 15_000); return () => { clearTimeout(initial); clearInterval(timer); }; }, [refresh]);
-  async function update(id: string, change: { label?: string; retire?: boolean }) {
+  async function update(id: string, change: { label?: string; retire?: boolean; action?: "approve" | "dismiss" }) {
     try {
       const response = await fetch("/api/kiosks", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, ...change }) });
       if (!response.ok) { setError(apiErrorMessage((await response.json()).error)); return; }
       setError(undefined); await refresh();
     } catch { setError("Could not update the device. Please try again."); }
   }
-  const active = devices.filter((device) => !device.retiredAt);
+  const active = devices.filter((device) => device.registrationStatus === "APPROVED" && !device.retiredAt);
+  const pending = devices.filter((device) => device.registrationStatus === "PENDING" && !device.retiredAt);
   const healthy = available && active.every((device) => kioskStatus(device.lastSeenAt, null, now) === "Online");
   const silent = active.some((device) => now - new Date(device.lastSeenAt).getTime() > KIOSK_ALERT_MS);
   return <header className="print-hidden border-b border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
@@ -41,13 +43,21 @@ export function KioskMonitor({ admin }: { admin: boolean }) {
     {open && <section aria-label="Kiosk devices" className="mt-4 space-y-3">
       {!devices.length && <p className="text-sm">No kiosks have reported yet.</p>}
       {error && <p role="alert" className="text-red-700">{error}</p>}
-      {devices.map((device, index) => <div key={device.id} className="flex flex-wrap items-center gap-3 rounded border p-3 text-sm">
-        <span>{device.label ?? `Kiosk ${index + 1}`}</span><span>Last seen: {new Date(device.lastSeenAt).toLocaleString()}</span><span>{kioskStatus(device.lastSeenAt, device.retiredAt, now)}</span>
+      {devices.filter((device) => device.registrationStatus !== "PENDING").map((device, index) => <div key={device.id} className="flex flex-wrap items-center gap-3 rounded border p-3 text-sm">
+        <span>{device.label ?? `Kiosk ${index + 1}`}</span><span>Last seen: {formatDateTime(device.lastSeenAt)}</span><span>{kioskStatus(device.lastSeenAt, device.retiredAt, now)}</span>
         {admin && <form onSubmit={(event) => { event.preventDefault(); const data = new FormData(event.currentTarget); void update(device.id, { label: String(data.get("label")) }); }} className="flex gap-2">
           <input aria-label={`Label for kiosk ${index + 1}`} name="label" defaultValue={device.label ?? ""} maxLength={80} className="rounded border px-2 py-1" /><button className="rounded border px-2 py-1">Rename</button>
         </form>}
         {admin && !device.retiredAt && <button onClick={() => { if (confirm("Retire this kiosk from monitoring?")) void update(device.id, { retire: true }); }} className="rounded border px-2 py-1">Retire</button>}
       </div>)}
+      {pending.length > 0 && <section aria-label="Unconfirmed devices" className="space-y-3">
+        <h2 className="font-semibold">Unconfirmed devices</h2>
+        <p className="text-sm">Approve a device to include it in kiosk monitoring.</p>
+        {pending.map((device) => <div key={device.id} className="flex flex-wrap items-center gap-3 rounded border p-3 text-sm">
+          <span>{device.label ?? device.id}</span><span>Last seen: {formatDateTime(device.lastSeenAt)}</span>
+          {admin && <><button onClick={() => void update(device.id, { action: "approve" })} className="rounded border px-2 py-1">Approve</button><button onClick={() => void update(device.id, { action: "dismiss" })} className="rounded border px-2 py-1">Dismiss</button></>}
+        </div>)}
+      </section>}
     </section>}
   </header>;
 }

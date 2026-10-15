@@ -1,5 +1,6 @@
 import { logger } from "@/lib/logger";
 import { withApi } from "@/lib/api";
+import { requireStaffApi } from "@/lib/api-auth";
 import { after, NextResponse } from "next/server";
 
 import { appBaseUrl } from "@/lib/appointment-access";
@@ -9,7 +10,6 @@ import {
   getAppointmentByReference,
   regenerateQrToken,
 } from "@/lib/appointments";
-import { getSession } from "@/lib/session";
 
 /**
  * POST /api/appointments/manage/[reference]/regenerate-qr — issue a new QR code
@@ -24,11 +24,7 @@ async function POSTHandler(
   request: Request,
   context: RouteContext<"/api/appointments/manage/[reference]/regenerate-qr">,
 ) {
-  const session = await getSession();
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const session = await requireStaffApi();
 
   const { reference } = await context.params;
 

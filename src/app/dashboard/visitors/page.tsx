@@ -1,5 +1,7 @@
 import { RECURRING_VISITS_THRESHOLD, RECURRING_WINDOW_DAYS } from "@/lib/booking-config";
-import { listProfilesForStaff, STAFF_PROFILE_LIMIT } from "@/lib/visitor-pass";
+import { requireStaff } from "@/lib/session";
+import { loadVisitorProfiles } from "@/lib/staff-data";
+import { STAFF_PROFILE_LIMIT } from "@/lib/visitor-pass";
 
 import { VisitorDirectory } from "./visitor-directory";
 
@@ -9,17 +11,19 @@ export const dynamic = "force-dynamic";
 /**
  * /dashboard/visitors — returning-visitor profiles and their passes.
  *
- * The session guard lives in `src/app/dashboard/layout.tsx`. Search is a plain
- * `?q=` so it survives a refresh and a shared link.
+ * Search is a plain `?q=` so it survives a refresh and a shared link.
  */
 export default async function VisitorsPage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  await requireStaff();
+  await requireStaff();
+  await requireStaff();
   const params = await searchParams;
   const q = typeof params.q === "string" ? params.q : "";
-  const profiles = await listProfilesForStaff(q);
+  const profiles = await loadVisitorProfiles(q);
 
   return (
     <div className="space-y-6">

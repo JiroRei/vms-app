@@ -1,42 +1,19 @@
 import { logger } from "@/lib/logger";
 import { withApi } from "@/lib/api";
+import { requireAdminApi } from "@/lib/api-auth";
 import { NextResponse } from "next/server";
 
 import { Role } from "@/generated/prisma/enums";
-import { getSession } from "@/lib/session";
 import { deleteStaff, setStaffRole } from "@/lib/staff";
 
-/** Both handlers need the same two answers, so they ask once. */
-async function requireAdmin() {
-  const session = await getSession();
-
-  if (!session) {
-    return {
-      session: null,
-      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
-    };
-  }
-
-  if (session.role !== Role.ADMIN) {
-    return {
-      session,
-      response: NextResponse.json(
-        { error: "Only administrators can manage staff accounts." },
-        { status: 403 },
-      ),
-    };
-  }
-
-  return { session, response: null };
-}
+const ADMIN_ONLY = "Only administrators can manage staff accounts.";
 
 /** PATCH /api/staff/[id] — promote or demote. */
 async function PATCHHandler(
   request: Request,
   context: RouteContext<"/api/staff/[id]">,
 ) {
-  const { session, response } = await requireAdmin();
-  if (response) return response;
+  const session = await requireAdminApi(ADMIN_ONLY);
 
   const { id } = await context.params;
 
@@ -60,7 +37,7 @@ async function PATCHHandler(
   // Demoting yourself is allowed only while someone else can put you back; the
   // last-administrator check below is what actually decides that. Saying it
   // here as well means the message names the real problem.
-  if (session && id === session.userId && role !== Role.ADMIN) {
+  if (id === session.userId && role !== Role.ADMIN) {
     return NextResponse.json(
       {
         error:
@@ -107,8 +84,7 @@ async function DELETEHandler(
   _request: Request,
   context: RouteContext<"/api/staff/[id]">,
 ) {
-  const { session, response } = await requireAdmin();
-  if (response) return response;
+  const session = await requireAdminApi(ADMIN_ONLY);
 
   const { id } = await context.params;
 

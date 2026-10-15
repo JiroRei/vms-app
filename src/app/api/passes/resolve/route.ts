@@ -6,7 +6,8 @@ import { readJsonBody } from "@/lib/appointment-responses";
 import { findPassAppointments } from "@/lib/appointments";
 import { describeAppointmentFailure } from "@/lib/qr";
 import { getActivePurposeOptions } from "@/lib/purposes";
-import { clientIp, consumeRateLimit } from "@/lib/rate-limit";
+import { getClientIp } from "@/lib/client-ip";
+import { consumeRateLimit } from "@/lib/rate-limit";
 import { getHosts } from "@/lib/visits";
 import { recentVisitChoices, validatePass } from "@/lib/visitor-pass";
 
@@ -26,7 +27,7 @@ const LOOKUP_LIMIT = { window: 60, max: 30 };
  * 403 and message, so a scan cannot tell which passes exist.
  */
 async function POSTHandler(request: Request) {
-  const limit = consumeRateLimit(`pass-lookup:${clientIp(request.headers)}`, LOOKUP_LIMIT);
+  const limit = consumeRateLimit(`pass-lookup:${getClientIp(request.headers)}`, LOOKUP_LIMIT);
 
   if (!limit.allowed) {
     return NextResponse.json(

@@ -2,18 +2,13 @@ import Link from "next/link";
 
 import { EmptyState } from "@/components/empty-state";
 import {
-  getVisitHistory,
   getHistoryQuery,
   historyFilterParams,
-  getVisitorFrequency,
   PAGE_SIZE,
   type HistoryFilters as Filters,
 } from "@/lib/history";
-// The full directory rather than `getHosts()`: a visit from last year still
-// belongs to whoever hosted it, so a host who has since left has to stay
-// filterable here even though the kiosk no longer offers them.
-import { listHosts } from "@/lib/hosts";
-import { getSession } from "@/lib/session";
+import { requireStaff } from "@/lib/session";
+import { loadHostDirectory, loadVisitHistory, loadVisitorFrequency } from "@/lib/staff-data";
 
 import { HistoryFilters } from "./history-filters";
 import { HistoryTable } from "./history-table";
@@ -35,19 +30,20 @@ export default async function HistoryPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  // The session guard lives in `src/app/dashboard/layout.tsx`, which redirects
-  // to /login before this renders.
+  const session = await requireStaff();
   const params = await searchParams;
 
   const query = getHistoryQuery(params);
   const { filters } = query;
 
-  const [history, hosts, frequency, session] = await Promise.all([
-    getVisitHistory(query),
-    listHosts(),
+  const [history, hosts, frequency] = await Promise.all([
+    loadVisitHistory(query),
+    // The full directory rather than `getHosts()`: a visit from last year
+    // still belongs to whoever hosted it, so a host who has since left has to
+    // stay filterable here even though the kiosk no longer offers them.
+    loadHostDirectory(),
     // Always 30 days; the chart's week view slices client-side.
-    getVisitorFrequency(30),
-    getSession(),
+    loadVisitorFrequency(30),
   ]);
 
   /** Builds a page link that preserves the active filters. */

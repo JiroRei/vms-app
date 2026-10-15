@@ -1,5 +1,6 @@
 import { logger } from "@/lib/logger";
 import { withApi } from "@/lib/api";
+import { requireAdminApi } from "@/lib/api-auth";
 import { NextResponse } from "next/server";
 
 // TODO(multi-tenancy): this route can edit any option in the global list. Once
@@ -7,7 +8,6 @@ import { NextResponse } from "next/server";
 // organization's admin will be able to rename or retire another's options.
 // See MULTI_TENANCY_TODO.md.
 
-import { requireAdmin } from "@/lib/api-auth";
 import { updatePurposeOption } from "@/lib/purposes";
 
 const MAX_LABEL = 80;
@@ -23,8 +23,7 @@ async function PATCHHandler(
   request: Request,
   context: RouteContext<"/api/purposes/[id]">,
 ) {
-  const denied = await requireAdmin();
-  if (denied) return denied;
+  await requireAdminApi();
 
   const { id } = await context.params;
 

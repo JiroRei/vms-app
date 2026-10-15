@@ -84,7 +84,7 @@ and, after every request, runs the email-outbox sweep and rate-limit pruning.
 | `POST /api/appointments` | Anonymous | Public booking (DB rate limits per IP and email; consent required). |
 | `POST /api/appointments/validate` | Anonymous | Look up an appointment by QR token or reference (kiosk preview). |
 | `POST /api/appointments/check-in` | Anonymous; `assisted: true` requires staff | Redeem an appointment (optionally via pass). |
-| `POST /api/appointments/manage` | Staff | Staff-created appointment. |
+| `POST /api/appointments/manage` | Staff | Staff-created appointment; scheduledFor is site wall-clock YYYY-MM-DDTHH:mm. |
 | `DELETE /api/appointments/manage/[reference]` | Staff | Staff cancel. |
 | `POST /api/appointments/manage/[reference]/check-in` | Staff | One-click staff check-in. |
 | `POST /api/appointments/manage/[reference]/regenerate-qr` | Staff | Issue a new QR token and email it. |
@@ -99,9 +99,9 @@ and, after every request, runs the email-outbox sweep and rate-limit pruning.
 | `POST /api/passes/resolve` | Anonymous | Kiosk/guard reads a pass: today's appointments or recent choices. |
 | `POST /api/passes/walk-in` | Anonymous; `assisted: true` requires staff | Express walk-in using a pass. |
 | `POST /api/visitors/[profileId]/pass` | Staff | `issue`, `send`, `rotate`, `revoke` a profile's pass. |
-| `POST /api/kiosk/heartbeat` | Anonymous | Kiosk device heartbeat (creates device on first beat). |
+| `POST /api/kiosk/heartbeat` | Anonymous | Heartbeat; unknown IDs register PENDING (5 creations/IP/hour; cap 20 pending). |
 | `GET /api/kiosks` | Staff | Kiosk devices and status. |
-| `PATCH /api/kiosks` | Admin | Label or retire a kiosk device. |
+| `PATCH /api/kiosks` | Admin | Label, retire, approve or dismiss a kiosk device. |
 | `POST /api/email-log/retry` | Admin | Re-queue a pending/failed email. |
 | `POST /api/cron/close-stale-visits` | Cron | Scheduled stale-visit close. |
 | `POST /api/cron/process-email-outbox` | Cron | Scheduled outbox delivery (25 per call). |
@@ -139,9 +139,9 @@ file per `prisma migrate diff`).
 | `VisitorVerification` (`visitor_verification`) | HMAC of emailed booking codes, attempts, expiry. |
 | `VisitorPass` (`visitor_pass`) | Persistent pass credential (signed `vp1.<id>.<mac>`), version, status, expiry. |
 | `ExportLog` (`export_log`) | Audit row for each CSV export (user id, filters, row count). |
-| `EmailOutbox` (`email_outbox`) | Persistent email queue: rendered HTML/text, attachments, attempts, status. |
+| `EmailOutbox` (`email_outbox`) | Persistent email queue: rendered HTML/text and attachments only until sent, finally failed or expired (then cleared); pass emails keep the pass id instead of the QR; rows purged after 14 days (30 if failed). Updated 2026-10-15. |
 | `RateLimitBucket` (`rate_limit_bucket`) | Fixed-window counters for public endpoints. |
-| `KioskDevice` (`kiosk_device`) | Browser that sent kiosk heartbeats; label, last seen, retired. |
+| `KioskDevice` (`kiosk_device`) | Device identity, label, last seen, retired; registrationStatus PENDING/APPROVED/RETIRED. Only approved, non-retired devices are monitored. |
 
 ### Fields that look unused, legacy or redundant
 
@@ -181,7 +181,7 @@ Checked by grepping writes and reads across `src/`, `prisma/` and `tests/`:
 
 | Variable | Read in | Controls |
 | --- | --- | --- |
-| `DATABASE_URL` | `src/lib/prisma.ts`, `prisma7.config.ts`, `prisma/seed.ts`, scripts, tests | Postgres connection; `?schema=` selects schema (honoured by app and CLI, **not** by `prisma/seed.ts`). |
+| `DATABASE_URL` | `src/lib/prisma.ts`, `prisma7.config.ts`, `prisma/seed.ts`, scripts, tests | Postgres connection; `?schema=` selects schema (honoured by app, CLI and seed through shared pg adapter configuration). |
 | `DATABASE_URL_TEST` | `tests/setup.ts`, `tests/test-database.ts`, `scripts/run-e2e.ts`, `playwright.config.ts` | Isolated test schema (default `e2e`). |
 | `DATABASE_URL_RESTORE` | `scripts/restore.ts` | Target for restore script. |
 | `BETTER_AUTH_SECRET` | Better Auth (implicit), `scripts/run-e2e.ts`, `tests/setup.ts` | Session signing. Absent from the local `.env` (commented out). |
@@ -212,7 +212,7 @@ Checked by grepping writes and reads across `src/`, `prisma/` and `tests/`:
 | `CHECK_IN_EARLY_MINUTES` | 60 | `src/lib/booking-config.ts` | Early check-in window. |
 | `RECURRING_VISITS_THRESHOLD` / `RECURRING_WINDOW_DAYS` | 3 / 30 | `src/lib/booking-config.ts` | Automatic pass issue. |
 | `PASS_VALID_DAYS` | 365 | `src/lib/booking-config.ts` | Pass expiry (sliding). |
-| `PUBLIC_BOOKING_EMAIL_LIMIT`, `PUBLIC_BOOKING_IP_LIMIT`, `VERIFICATION_IP_LIMIT`, `KIOSK_HEARTBEAT_IP_LIMIT` | 5/h, 20/h, 20/15 min, 60/min | `src/lib/booking-config.ts` | DB-backed rate limits. |
+| `PUBLIC_BOOKING_EMAIL_LIMIT`, `PUBLIC_BOOKING_IP_LIMIT`, `VERIFICATION_IP_LIMIT`, `KIOSK_HEARTBEAT_IP_LIMIT` | 5/h, 20/h, 20/15 min, 60/min | `src/lib/booking-config.ts` | DB-backed rate limits, keyed by `getClientIp()` (`TRUSTED_PROXY_COUNT`). Since 2026-10-15 also `VERIFICATION_EMAIL_LIMIT`, `VERIFICATION_CHECK_EMAIL_LIMIT`, `KIOSK_REFERENCE_LIMIT`, `KIOSK_VALIDATION_GLOBAL_LIMIT`, `KIOSK_HEARTBEAT_DEVICE_LIMIT` (address-independent). |
 | Per-route in-memory limits | 5 to 30 per minute | each route (`CHECK_IN_LIMIT`, `LOOKUP_LIMIT`, `REDEEM_LIMIT`, `LIMIT`, `SIGN_IN_LIMIT`, `CHANGE_PASSWORD_LIMIT`) | Process-local limits. |
 | `APPOINTMENT_GRACE_HOURS` | 4 | `src/lib/qr.ts` | Appointment expiry after scheduled time (duplicated as `GRACE_HOURS` in `prisma/seed.ts`). |
 | `STAFF_UPCOMING_DAYS` | 14 | `src/lib/appointments.ts` | Staff appointment list horizon. |
@@ -223,6 +223,8 @@ Checked by grepping writes and reads across `src/`, `prisma/` and `tests/`:
 | `EMAIL_BACKOFF_MS` | 1 m, 5 m, 30 m, 2 h, 12 h | `src/lib/email-retry.ts` | Email retries. |
 | `KIOSK_STALE_MS`, `KIOSK_ALERT_MS` | 90 s, 180 s | `src/lib/kiosks.ts` | Kiosk offline status and alert. |
 | `IDLE_MS`, `WARNING_MS` | 60 s, 15 s | `src/app/check-in/kiosk-idle-reset.tsx` | Kiosk idle reset. |
+| Pending kiosks | 20 max; 7 days unseen retention | `src/lib/kiosk-registration.ts` | Pending devices never affect monitoring. |
+| Kiosk creation IP limit | 5/hour | `src/lib/booking-config.ts` | Only first registration consumes this budget. |
 | Polling intervals | 5 s (live list, stat cards), 15 s (roll-call, kiosk monitor, booking clock), 30 s (heartbeat) | respective components | UI refresh. |
 | `SWEEP_INTERVAL_MS` | 60 s | `src/lib/stale-visits.ts` | Throttle for read-triggered stale sweep. |
 | `PAGE_SIZE` | 25 | `src/lib/history.ts` | History page size; email log uses 50 inline. |
@@ -281,7 +283,7 @@ Entry: `/appointment-booking`. Files: `booking-form.tsx`, `date-time-picker.tsx`
 (`manage-view.tsx`, `src/lib/appointment-access.ts`, `src/lib/ics.ts`) and
 `/api/booking/appointments/[reference]/{cancel,reschedule}`.
 Staff creation: `/dashboard/appointments` (`appointment-manager.tsx`,
-`appointment-board.tsx`) and `/api/appointments/manage/**`.
+`appointment-board.tsx`) and `/api/appointments/manage/**`. Both forms submit site wall-clock values converted by `parseStaffSchedule` / `zonedTimeToUtc`; displays and reschedule prefill use the site zone. Staff can choose any future minute. History/CSV date ranges and the daily register use site-midnight boundaries.
 
 ### Appointment check-in
 Entries: kiosk `/check-in/appointment`, guard `/dashboard/scan` (both
@@ -342,21 +344,51 @@ Roll-call print: `/dashboard/roll-call` (`roll-call.tsx`).
 beat every 30 s) → `POST /api/kiosk/heartbeat`; dashboard banner
 `src/app/dashboard/kiosk-monitor.tsx` → `GET/PATCH /api/kiosks`.
 
+
+Unknown devices enter `PENDING` and appear under **Unconfirmed devices**; admins
+Approve them into monitoring or Dismiss them into `RETIRED`. Only non-retired
+`APPROVED` devices affect status and alerts. Retired identities stay retired on
+later heartbeats. `src/lib/kiosk-registration.ts` deletes pending rows unseen
+for 7 days on heartbeats and list reads and serializes registration with a
+Postgres transaction lock to cap pending rows at 20. Creation has a persistent
+5/IP/hour limit in addition to the heartbeat IP/device limits. Existing devices
+seen in the last 24 hours were approved by migration; the rest were retired.
+Last-seen timestamps use the shared site-zone formatter.
+
+### Seed and test isolation
+`prisma/seed.ts` prints its database/schema/host before connecting and refuses
+schemas with staff accounts unless `--force` is passed (`db:seed -- --force`
+through the package script or direct Prisma CLI `db seed -- --force`). Force
+creates only missing records; it never resets passwords or operator data.
+`scripts/verify-seed.ts` tests a clean generated scratch schema and drops it in
+`finally`. App and seed share `src/lib/database-config.ts` and explicitly pass
+`?schema=` to the pg adapter. Unit fixtures and the e2e build/seed/server use the
+isolated `e2e` schema. Reset checks the captured client target as well as the
+environment; localhost aliases are normalized during isolation checks.
+`scripts/run-e2e.ts` clears test rows and the mail sink in `finally`, including
+failed runs. Run unit and e2e suites sequentially because they share `e2e`.
+`scripts/cleanup-audit-purposes.ts` removes unreferenced `[test]` options and
+deactivates referenced ones in the explicitly printed target schema.
+
 ## 8. Access matrix (measured)
 
 Measured on 2026-10-14 against `next start` with temporary audit accounts.
 Requests to mutating routes used empty JSON bodies or non-existent ids, so a
 400/404 for staff means "passed the access check, failed validation".
 
-Note on the guard column for admin pages: `/dashboard/hosts`, `/staff`,
-`/email-log` and `/settings/purposes` return **200** to a guard, but the body
-is only the layout plus a `NEXT_REDIRECT` and a `<meta http-equiv="refresh"
-content="1;url=/dashboard">`; no admin data was present in the body. The
-redirect happens after streaming starts, so it is not a 307.
+**Updated 2026-10-15** after the B-01 fix. The tables below show the current
+behaviour; `tests/e2e/access-matrix.spec.ts` now measures every route found in
+`src/app` (anonymous as document, RSC and plain fetch; guard; admin) and
+fails on any regression or unclassified route. Access levels live in
+`tests/access-matrix.ts`.
 
-The anonymous 307 for `/dashboard/*` holds only for normal document requests.
-With an `RSC: 1` header, `/dashboard/visitors`, `/dashboard/appointments` and
-`/dashboard/history` return 200 with data (KNOWN_ISSUES B-01).
+- Anonymous requests to any `/dashboard/*` page, including RSC requests,
+  get a 307 to /login from `src/proxy.ts` before rendering, with no data in
+  the body. Before the fix, RSC requests returned 200, and document requests
+  to `/dashboard/appointments`, `/history` and `/visitors` returned 307 with
+  seeded data still in the body (KNOWN_ISSUES "Fixed on 2026-10-15").
+- Guards get a real 403 on the admin pages (previously 200 with a meta
+  refresh).
 
 | Page | Anonymous | Guard | Admin |
 | --- | --- | --- | --- |
@@ -378,10 +410,10 @@ With an `RSC: 1` header, `/dashboard/visitors`, `/dashboard/appointments` and
 | `/dashboard/roll-call` | 307 → /login | 200 | 200 |
 | `/dashboard/visitors` | 307 → /login | 200 | 200 |
 | `/dashboard/account` | 307 → /login | 200 | 200 |
-| `/dashboard/hosts` | 307 → /login | 200 (meta refresh → /dashboard, no data) | 200 |
-| `/dashboard/staff` | 307 → /login | 200 (meta refresh → /dashboard, no data) | 200 |
-| `/dashboard/email-log` | 307 → /login | 200 (meta refresh → /dashboard, no data) | 200 |
-| `/dashboard/settings/purposes` | 307 → /login | 200 (meta refresh → /dashboard, no data) | 200 |
+| `/dashboard/hosts` | 307 → /login | 403 | 200 |
+| `/dashboard/staff` | 307 → /login | 403 | 200 |
+| `/dashboard/email-log` | 307 → /login | 403 | 200 |
+| `/dashboard/settings/purposes` | 307 → /login | 403 | 200 |
 | `/kiosk` | 307 → /check-in | 307 → /check-in | 307 → /check-in |
 | `/book` | 307 → /appointment-booking | 307 → /appointment-booking | 307 → /appointment-booking |
 | `/does-not-exist` | 404 | 404 | 404 |
@@ -416,7 +448,7 @@ With an `RSC: 1` header, `/dashboard/visitors`, `/dashboard/appointments` and
 | `POST /api/visits/[id]/return` | 401 | 404 | 404 |
 | `GET /api/visits/close-stale` | 401 | 200 | 200 |
 | `POST /api/visits/close-stale` | 401 | 403 | 200 |
-| `GET /api/visits/export` | **403** (should be 401) | 403 | 200 |
+| `GET /api/visits/export` | 401 | 403 | 200 |
 | `GET /api/dashboard/stats` | 401 | 200 | 200 |
 | `GET /api/roll-call` | 401 | 200 | 200 |
 | `GET /api/kiosks` | 401 | 200 | 200 |

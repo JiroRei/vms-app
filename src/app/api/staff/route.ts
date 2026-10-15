@@ -1,9 +1,9 @@
 import { logger } from "@/lib/logger";
 import { withApi } from "@/lib/api";
+import { requireAdminApi } from "@/lib/api-auth";
 import { NextResponse } from "next/server";
 
 import { Role } from "@/generated/prisma/enums";
-import { getSession } from "@/lib/session";
 import { createStaff, MIN_PASSWORD_LENGTH } from "@/lib/staff";
 
 /**
@@ -14,18 +14,7 @@ import { createStaff, MIN_PASSWORD_LENGTH } from "@/lib/staff";
  * issuing a credential, not a stranger claiming one.
  */
 async function POSTHandler(request: Request) {
-  const session = await getSession();
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  if (session.role !== Role.ADMIN) {
-    return NextResponse.json(
-      { error: "Only administrators can manage staff accounts." },
-      { status: 403 },
-    );
-  }
+  await requireAdminApi("Only administrators can manage staff accounts.");
 
   let body: unknown;
 

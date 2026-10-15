@@ -9,6 +9,7 @@ import {
   formatZonedDate,
   formatZonedTime,
 } from "@/lib/booking-config";
+import { sameLastName } from "@/lib/names";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -120,6 +121,29 @@ export function checkInOpensAt(scheduledFor: Date): Date {
 }
 
 /**
+ * Who is claiming an appointment at the kiosk. A reference number is short
+ * and is printed, read aloud and emailed, so on the self-service kiosk it only
+ * counts together with the booking's last name. The QR token (a random UUID
+ * only the visitor's email carries) needs nothing more, and guard-side lookups
+ * pass no holder at all: the guard checks the person in front of them.
+ */
+export type AppointmentHolder = { lastName: string };
+
+/**
+ * Whether the claimant may see or redeem this appointment. A mismatch is
+ * reported exactly like an unknown code, so the kiosk does not reveal that a
+ * reference exists, or its status, without the right name.
+ */
+export function holderMatches(
+  appointment: { qrToken: string; lastName: string },
+  token: string,
+  holder: AppointmentHolder | undefined,
+): boolean {
+  if (!holder || appointment.qrToken === token.trim()) return true;
+  return sameLastName(holder.lastName, appointment.lastName);
+}
+
+/**
  * The rule for whether an appointment may be redeemed right now, with no
  * database access of its own.
  *
@@ -203,6 +227,7 @@ export function describeAppointmentFailure(
  */
 export async function validateAppointmentToken(
   token: string,
+  holder?: AppointmentHolder,
 ): Promise<AppointmentTokenResult> {
   const trimmed = token.trim();
 
@@ -225,7 +250,7 @@ export async function validateAppointmentToken(
     },
   });
 
-  if (!appointment) {
+  if (!appointment || !holderMatches(appointment, trimmed, holder)) {
     return notFound();
   }
 

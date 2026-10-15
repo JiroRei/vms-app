@@ -2,6 +2,7 @@ import { withApi } from "@/lib/api";
 import { toNextJsHandler } from "better-auth/next-js";
 
 import { auth } from "@/lib/auth";
+import { CLIENT_IP_HEADER, getClientIp } from "@/lib/client-ip";
 
 /**
  * Better Auth's own endpoints — `/api/auth/sign-in/email`, `/sign-out`,
@@ -16,5 +17,24 @@ import { auth } from "@/lib/auth";
  * PUT and DELETE fall through to a 405 rather than being silently routed.
  */
 const handlers = toNextJsHandler(auth);
-export const GET = withApi(handlers.GET);
-export const POST = withApi(handlers.POST);
+
+/**
+ * Better Auth rate-limits by IP, and by default reads it from
+ * `X-Forwarded-For`, which a client controls. `src/lib/auth.ts` points it at
+ * this header instead, which always holds the address `getClientIp()`
+ * resolved; a client-sent copy is overwritten.
+ */
+function withClientIp(handler: (request: Request) => Promise<Response>) {
+  return (request: Request) => {
+    const headers = new Headers(request.headers);
+    headers.set(CLIENT_IP_HEADER, getClientIp(request.headers));
+    // Rebuilt rather than cloned: the body is a stream, which a copy may only
+    // take over with `duplex: "half"`.
+    const init: RequestInit & { duplex?: "half" } = { method: request.method, headers, signal: request.signal };
+    if (request.body) Object.assign(init, { body: request.body, duplex: "half" });
+    return handler(new Request(request.url, init));
+  };
+}
+
+export const GET = withApi(withClientIp(handlers.GET));
+export const POST = withApi(withClientIp(handlers.POST));

@@ -1,21 +1,12 @@
-import { redirect } from "next/navigation";
-
-import { listHosts } from "@/lib/hosts";
-import { getSession } from "@/lib/session";
+import { requireAdmin } from "@/lib/session";
+import { loadHostDirectory } from "@/lib/staff-data";
 
 import { HostDirectory } from "./host-directory";
 
 export default async function HostsPage() {
-  const session = await getSession();
-
-  // The layout has already established there *is* a session; this is the role
-  // gate. The API enforces it too — the sidebar hiding the link is not the
-  // control, and neither is this.
-  if (session?.role !== "ADMIN") {
-    redirect("/dashboard");
-  }
-
-  const hosts = await listHosts();
+  // The API enforces the same rule; hiding the sidebar link is not the control.
+  await requireAdmin();
+  const hosts = await loadHostDirectory();
 
   return (
     <div className="space-y-6">

@@ -28,6 +28,21 @@ export const PUBLIC_BOOKING_EMAIL_LIMIT = { window: 3600, max: 5 };
 export const PUBLIC_BOOKING_IP_LIMIT = { window: 3600, max: 20 };
 export const VERIFICATION_IP_LIMIT = { window: 15 * 60, max: 20 };
 export const KIOSK_HEARTBEAT_IP_LIMIT = { window: 60, max: 60 };
+/** New devices per client address; existing kiosks can continue heartbeating. */
+export const KIOSK_CREATION_IP_LIMIT = { window: 3600, max: 5 };
+
+// Second limits that do not depend on the caller's address (KNOWN_ISSUES M-01):
+// a script spreading requests across many addresses still hits these.
+/** Code requests per email address (the email is the target being spammed). */
+export const VERIFICATION_EMAIL_LIMIT = { window: 15 * 60, max: 5 };
+/** Code checks per email address, on top of the per-code attempt cap. */
+export const VERIFICATION_CHECK_EMAIL_LIMIT = { window: 15 * 60, max: 10 };
+/** Kiosk lookups and check-ins per reference number: a visitor retyping a name is a handful. */
+export const KIOSK_REFERENCE_LIMIT = { window: 10 * 60, max: 10 };
+/** Kiosk lookups and check-ins across all callers: far above a busy lobby, far below a scan of the space. */
+export const KIOSK_VALIDATION_GLOBAL_LIMIT = { window: 60, max: 300 };
+/** Heartbeats per device; a kiosk sends one every 30 seconds. */
+export const KIOSK_HEARTBEAT_DEVICE_LIMIT = { window: 60, max: 6 };
 
 /** How the picker names that zone to visitors. */
 export const BOOKING_TIMEZONE_LABEL = SITE_TIMEZONE_LABEL;
@@ -356,4 +371,11 @@ export function toDateTimeLocalInZone(instant: Date): string {
   }
 
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}
+
+/** Staff may choose any future minute, using the same site conversion as slots. */
+export function parseStaffSchedule(value: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return null;
+  const [day, time] = value.split("T");
+  try { return zonedTimeToUtc(day, time); } catch { return null; }
 }

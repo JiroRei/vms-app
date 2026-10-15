@@ -1,5 +1,7 @@
+import { parseStaffSchedule } from "@/lib/booking-config";
 import { logger } from "@/lib/logger";
 import { withApi } from "@/lib/api";
+import { requireStaffApi } from "@/lib/api-auth";
 import { after, NextResponse } from "next/server";
 
 import { appBaseUrl } from "@/lib/appointment-access";
@@ -12,13 +14,12 @@ import {
   getAppointmentByReference,
   rescheduleAppointment,
 } from "@/lib/appointments";
-import { getSession } from "@/lib/session";
 
 /**
  * POST /api/appointments/manage/[reference]/reschedule — move an appointment
  * from the dashboard.
  *
- * Staff-only. Takes `scheduledFor` as an ISO instant, any time in the future —
+ * Staff-only. Takes `scheduledFor` as a site wall-clock value, any time in the future —
  * the same latitude staff have when pre-registering, since the desk may need to
  * fit someone in outside the public slots. The QR code and reference number are
  * unchanged; the visitor gets the "Appointment updated" email after the
@@ -28,16 +29,12 @@ async function POSTHandler(
   request: Request,
   context: RouteContext<"/api/appointments/manage/[reference]/reschedule">,
 ) {
-  const session = await getSession();
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const session = await requireStaffApi();
 
   const { reference } = await context.params;
   const body = await readJsonBody(request);
   const raw = typeof body.scheduledFor === "string" ? body.scheduledFor : "";
-  const scheduledFor = raw ? new Date(raw) : null;
+  const scheduledFor = parseStaffSchedule(raw);
 
   if (!scheduledFor || Number.isNaN(scheduledFor.getTime())) {
     return NextResponse.json(

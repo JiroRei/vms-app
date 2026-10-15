@@ -1,6 +1,6 @@
 /**
  * The rate limiter and the date formatters — the two pure modules, so these
- * need no database.
+ * need no database. Caller identification is in `client-ip.test.ts`.
  */
 import assert from "node:assert/strict";
 import { beforeEach, describe, test } from "node:test";
@@ -11,11 +11,7 @@ import {
   formatDuration,
   formatTime,
 } from "@/lib/dates";
-import {
-  clientIp,
-  consumeRateLimit,
-  resetRateLimits,
-} from "@/lib/rate-limit";
+import { consumeRateLimit, resetRateLimits } from "@/lib/rate-limit";
 
 beforeEach(resetRateLimits);
 
@@ -71,21 +67,6 @@ describe("rate limiting", () => {
 
     assert.equal(consumeRateLimit("key", rule).allowed, true);
     assert.equal(consumeRateLimit("key", rule).allowed, true);
-  });
-});
-
-describe("identifying the caller", () => {
-  test("takes the first hop of x-forwarded-for", () => {
-    const headers = new Headers({
-      "x-forwarded-for": "203.0.113.7, 198.51.100.1",
-    });
-
-    assert.equal(clientIp(headers), "203.0.113.7");
-  });
-
-  test("falls back to x-real-ip, then to a shared key", () => {
-    assert.equal(clientIp(new Headers({ "x-real-ip": "203.0.113.9" })), "203.0.113.9");
-    assert.equal(clientIp(new Headers()), "unknown");
   });
 });
 

@@ -1,10 +1,8 @@
 // TODO(multi-tenancy): this list is currently global across all users of the app. Once multi-tenancy exists, scope create/list/update here by the admin's organizationId, or a second organization editing this list will affect every other organization's dropdown.
 
 import Link from "next/link";
-import { redirect } from "next/navigation";
-
-import { getSession } from "@/lib/session";
-import { getPurposeOptions } from "@/lib/purposes";
+import { requireAdmin } from "@/lib/session";
+import { loadPurposeSettings } from "@/lib/staff-data";
 
 import { PurposeOptionsManager } from "./purpose-options-manager";
 
@@ -12,16 +10,9 @@ import { PurposeOptionsManager } from "./purpose-options-manager";
 export const dynamic = "force-dynamic";
 
 export default async function PurposesSettingsPage() {
-  // The dashboard layout has already rejected anyone without a session; this
-  // narrows that to admins. The API enforces the same rule — hiding the page is
-  // not the control.
-  const session = await getSession();
-
-  if (session?.role !== "ADMIN") {
-    redirect("/dashboard");
-  }
-
-  const options = await getPurposeOptions();
+  // The API enforces the same rule; hiding the page is not the control.
+  await requireAdmin();
+  const options = await loadPurposeSettings();
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6">

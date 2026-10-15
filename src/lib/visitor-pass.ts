@@ -167,7 +167,7 @@ export async function emailPass(
   return sendVisitorPassEmail({
     firstName: pass.profile.firstName,
     visitorEmail: pass.profile.email,
-    token: tokenForPass(pass),
+    pass: { id: pass.id, version: pass.version },
     expiresAt: pass.expiresAt,
     kind,
   });

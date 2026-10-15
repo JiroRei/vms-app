@@ -1,8 +1,8 @@
 import { logger } from "@/lib/logger";
 import { withApi } from "@/lib/api";
+import { requireStaffApi } from "@/lib/api-auth";
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/session";
 import { markVisitReturning } from "@/lib/visits";
 
 /**
@@ -16,11 +16,7 @@ async function POSTHandler(
   _request: Request,
   context: RouteContext<"/api/visits/[id]/step-out">,
 ) {
-  const session = await getSession();
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  await requireStaffApi();
 
   const { id } = await context.params;
 

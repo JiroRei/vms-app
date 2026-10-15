@@ -3,7 +3,8 @@ import { withApi } from "@/lib/api";
 import { after, NextResponse } from "next/server";
 
 import { readVisitorClaim } from "@/lib/appointment-access";
-import { clientIp, consumeRateLimit } from "@/lib/rate-limit";
+import { getClientIp } from "@/lib/client-ip";
+import { consumeRateLimit } from "@/lib/rate-limit";
 import { emailPass, getActivePass, rotatePass } from "@/lib/visitor-pass";
 
 const LIMIT = { window: 60, max: 5 };
@@ -18,7 +19,7 @@ const LIMIT = { window: 60, max: 5 };
  * emailed after the response.
  */
 async function POSTHandler(request: Request) {
-  const limit = consumeRateLimit(`pass-rotate:${clientIp(request.headers)}`, LIMIT);
+  const limit = consumeRateLimit(`pass-rotate:${getClientIp(request.headers)}`, LIMIT);
 
   if (!limit.allowed) {
     return NextResponse.json(

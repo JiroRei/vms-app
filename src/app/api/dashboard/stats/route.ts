@@ -1,19 +1,13 @@
-import { ApiError, withApi } from "@/lib/api";
-import { getDashboardStats } from "@/lib/dashboard-stats";
-import { getSession } from "@/lib/session";
+import { withApi } from "@/lib/api";
+import { requireStaffApi } from "@/lib/api-auth";
+import { loadDashboardStats } from "@/lib/staff-data";
 
 export const dynamic = "force-dynamic";
 export const GET = withApi(async () => {
-  if (!(await getSession())) {
-    throw new ApiError(
-      401,
-      "UNAUTHORIZED",
-      "Please sign in to view dashboard stats.",
-    );
-  }
+  await requireStaffApi();
 
   return Response.json(
-    { stats: await getDashboardStats() },
+    { stats: await loadDashboardStats() },
     { headers: { "Cache-Control": "private, no-store" } },
   );
 });

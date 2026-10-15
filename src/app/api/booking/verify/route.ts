@@ -11,9 +11,9 @@ import {
 } from "@/lib/booking-verification";
 import { parseNameParts } from "@/lib/names";
 import { BOOKING_PASS_COOKIE_NAME, BOOKING_PASS_COOKIE_PATH } from "@/lib/booking-pass";
-import { VERIFICATION_IP_LIMIT } from "@/lib/booking-config";
+import { VERIFICATION_CHECK_EMAIL_LIMIT, VERIFICATION_IP_LIMIT } from "@/lib/booking-config";
 import { consumeDatabaseRateLimit } from "@/lib/database-rate-limit";
-import { clientIp } from "@/lib/rate-limit";
+import { getClientIp } from "@/lib/client-ip";
 
 const CODE_PATTERN = /^\d{6}$/;
 
@@ -32,7 +32,7 @@ const FAILURE =
  * for the form to prefill.
  */
 async function POSTHandler(request: Request) {
-  const limit = await consumeDatabaseRateLimit(`verification-check:${clientIp(request.headers)}`, VERIFICATION_IP_LIMIT);
+  const limit = await consumeDatabaseRateLimit(`verification-check:${getClientIp(request.headers)}`, VERIFICATION_IP_LIMIT);
   if (!limit.allowed) return NextResponse.json({ error: "Too many verification attempts. Please wait 15 minutes and try again." }, { status: 429, headers: { "Retry-After": String(limit.retryAfter) } });
   let body: unknown;
 
@@ -57,6 +57,11 @@ async function POSTHandler(request: Request) {
   if (!emailValue || !name.ok) {
     return NextResponse.json({ error: FAILURE }, { status: 400 });
   }
+
+  // Per address as well as per caller (KNOWN_ISSUES M-01); each code also has
+  // its own attempt cap in `verifyCode`.
+  const emailLimit = await consumeDatabaseRateLimit(`verification-check-email:${emailValue.toLowerCase()}`, VERIFICATION_CHECK_EMAIL_LIMIT);
+  if (!emailLimit.allowed) return NextResponse.json({ error: "Too many verification attempts. Please wait 15 minutes and try again." }, { status: 429, headers: { "Retry-After": String(emailLimit.retryAfter) } });
 
   try {
     const profile = await verifyCode(

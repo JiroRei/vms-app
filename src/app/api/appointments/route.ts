@@ -20,7 +20,7 @@ import { parseNameParts } from "@/lib/names";
 import { prisma } from "@/lib/prisma";
 import { findSelectablePurpose } from "@/lib/purposes";
 import { renderQrDataUrl } from "@/lib/qr";
-import { clientIp } from "@/lib/rate-limit";
+import { getClientIp } from "@/lib/client-ip";
 
 /** Caps on the free-text fields, so a paste cannot write an essay to the table. */
 const MAX_EMAIL = 200;
@@ -55,7 +55,7 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
  */
 async function POSTHandler(request: Request) {
   const limit = await consumeDatabaseRateLimit(
-    `public-booking:${clientIp(request.headers)}`,
+    `public-booking:${getClientIp(request.headers)}`,
     PUBLIC_BOOKING_IP_LIMIT,
   );
   if (!limit.allowed) {

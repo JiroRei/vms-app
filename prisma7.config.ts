@@ -9,7 +9,7 @@ export default defineConfig({
     path: "prisma/migrations",
     // Prisma 7 reads the seed command from here; the older `prisma.seed` key in
     // package.json is no longer picked up. Runs via `npx prisma db seed`.
-    seed: "tsx prisma/seed.ts",
+    seed: "node --import tsx prisma/seed.ts",
   },
   datasource: {
     url: process.env["DATABASE_URL"],

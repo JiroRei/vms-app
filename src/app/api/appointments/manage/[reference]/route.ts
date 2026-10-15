@@ -1,5 +1,6 @@
 import { logger } from "@/lib/logger";
 import { withApi } from "@/lib/api";
+import { requireStaffApi } from "@/lib/api-auth";
 import { after, NextResponse } from "next/server";
 
 import { emailCancellation } from "@/lib/appointment-notify";
@@ -11,7 +12,6 @@ import {
   cancelAppointment,
   getAppointmentByReference,
 } from "@/lib/appointments";
-import { getSession } from "@/lib/session";
 
 /**
  * DELETE /api/appointments/manage/[reference] — cancel an appointment.
@@ -28,11 +28,7 @@ async function DELETEHandler(
   request: Request,
   context: RouteContext<"/api/appointments/manage/[reference]">,
 ) {
-  const session = await getSession();
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const session = await requireStaffApi();
 
   const { reference } = await context.params;
   const body = await readJsonBody(request);

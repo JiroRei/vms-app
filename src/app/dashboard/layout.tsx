@@ -5,15 +5,19 @@ import { DashboardNavigation } from "@/components/dashboard-navigation";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { ToastProvider } from "@/components/toast";
 import { signOut } from "@/app/login/actions";
-import { countExpectedToday } from "@/lib/appointments";
 import { getSession } from "@/lib/session";
+import { loadExpectedTodayCount } from "@/lib/staff-data";
 import { ORGANIZATION_NAME } from "@/lib/site-config";
 import { KioskMonitor } from "./kiosk-monitor";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
+  // For the shell only. This does not protect the pages: Next renders a page in
+  // parallel with its layout, and an RSC request can skip the layout. Every
+  // page checks the session itself (requireStaff/requireAdmin), and
+  // `src/proxy.ts` turns anonymous requests away before rendering.
   const session = await getSession();
   if (!session) redirect("/login");
-  const expectedToday = await countExpectedToday().catch(() => 0);
+  const expectedToday = await loadExpectedTodayCount().catch(() => 0);
 
   return (
     <div className="dashboard-shell flex min-h-screen bg-gray-50 text-gray-900 dark:bg-gray-950 dark:text-gray-100">

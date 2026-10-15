@@ -1,10 +1,9 @@
 import "server-only";
 
-import { sendEmail } from "@/lib/email-outbox";
+import { PASS_QR_CONTENT_ID, sendEmail } from "@/lib/email-outbox";
 export { sendEmail } from "@/lib/email-outbox";
 import { reportError } from "@/lib/logger";
 
-import { renderPassQrPng } from "@/lib/pass-token";
 import { renderQrPng } from "@/lib/qr";
 import { SITE_TIMEZONE } from "@/lib/site-config";
 
@@ -425,7 +424,9 @@ export async function sendVerificationCodeEmail(
     const code = escapeHtml(input.code);
     return await sendEmail({ kind: "verification", expiresAt: input.expiresAt ?? new Date(Date.now() + input.validMinutes * 60_000),
       to: input.visitorEmail,
-      subject: `Your booking code is ${input.code}`,
+      // Not in the subject: lock screens and inbox lists show subjects
+      // (KNOWN_ISSUES N-10), and the outbox keeps subjects as metadata.
+      subject: "Your booking code",
       html: `<!doctype html>
 <html>
   <body style="margin:0;padding:24px;background:#f5f5f5;font-family:Arial,Helvetica,sans-serif;color:#111827;">
@@ -466,14 +467,16 @@ export async function sendVerificationCodeEmail(
 export type VisitorPassEmailInput = {
   firstName: string;
   visitorEmail: string;
-  /** The pass token, `vp1.…`; never written to application logs. */
-  token: string;
+  /**
+   * The pass to send. Only its id and version are stored in the outbox; the QR
+   * is rendered when the email is actually sent, and not at all if the pass was
+   * rotated or revoked by then (KNOWN_ISSUES M-05).
+   */
+  pass: { id: string; version: number };
   expiresAt: Date;
   /** `issued` for a new pass; `replaced` after a rotate (the old QR is dead). */
   kind: "issued" | "replaced";
 };
-
-const PASS_QR_CONTENT_ID = "visitor-pass-qr";
 
 const passDateFormatter = new Intl.DateTimeFormat("en-US", {
   timeZone: SITE_TIMEZONE,
@@ -495,8 +498,7 @@ export async function sendVisitorPassEmail(
     const title = input.kind === "issued" ? "Your visitor pass" : "Your replacement visitor pass";
     const replacedNote = input.kind === "replaced" ? "Your previous pass no longer works. Use this one from now on." : null;
     const validUntil = passDateFormatter.format(input.expiresAt);
-    const qr = await renderPassQrPng(input.token);
-    return await sendEmail({ kind: `visitor-pass-${input.kind}`,
+    return await sendEmail({ kind: `visitor-pass-${input.kind}`, pass: input.pass,
       to: input.visitorEmail,
       subject: title,
       html: shell(`<tr>
@@ -536,14 +538,6 @@ export async function sendVisitorPassEmail(
         "visits. Keep it to yourself: anyone holding it can check in as you.",
         `It stays valid while you keep visiting (currently until ${validUntil}).`,
       ].join("\n"),
-      attachments: [
-        {
-          filename: "visitor-pass.png",
-          content: qr,
-          contentType: "image/png",
-          contentId: PASS_QR_CONTENT_ID,
-        },
-      ],
     });
   } catch (error) {
     await reportError(error, { operation: "sendVisitorPassEmail" });

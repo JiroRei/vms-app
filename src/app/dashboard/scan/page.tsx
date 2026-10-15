@@ -1,11 +1,12 @@
 import Link from "next/link";
 
 import { AppointmentCheckIn } from "@/components/appointment-check-in";
+import { requireStaff } from "@/lib/session";
 
-export default function ScanPage() {
-  // The session guard lives in `src/app/dashboard/layout.tsx`, which redirects
-  // to /login before this renders. The check-in call re-checks it server-side,
-  // because that is what stamps the guard onto the visit.
+export default async function ScanPage() {
+  // The check-in call re-checks the session server-side, because that is what
+  // stamps the guard onto the visit.
+  await requireStaff();
   return (
     <div className="mx-auto w-full max-w-md space-y-6">
       <AppointmentCheckIn mode="guard" />

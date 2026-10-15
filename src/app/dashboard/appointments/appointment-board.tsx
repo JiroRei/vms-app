@@ -1,10 +1,7 @@
 "use client";
 import { apiErrorMessage } from "@/lib/api-error-message";
-
-
 import { useRouter } from "next/navigation";
 import { Fragment, useState } from "react";
-
 import { EmptyState } from "@/components/empty-state";
 import { TimelineChevron } from "@/components/visit-timeline";
 import { useToast } from "@/components/toast";
@@ -15,6 +12,7 @@ import type {
 } from "@/lib/appointments";
 import {
   BOOKING_TIMEZONE,
+  BOOKING_TIMEZONE_LABEL,
   formatZonedTime,
   toDateTimeLocalInZone,
 } from "@/lib/booking-config";
@@ -355,8 +353,8 @@ export function AppointmentBoard({ lists }: { lists: StaffAppointmentLists }) {
                                   {
                                     method: "POST",
                                     // The field is wall-clock time in the
-                                    // building's zone; the server gets an instant.
-                                    body: JSON.stringify({ scheduledFor: newTime ? `${newTime}:00${zoneOffset(newTime)}` : "" }),
+                                    // building's zone; the server converts it.
+                                    body: JSON.stringify({ scheduledFor: newTime }),
                                   },
                                   (data) =>
                                     `Moved to ${stamp.format(new Date(String(data.scheduledFor)))}. The visitor has been emailed; their QR code is unchanged.`,
@@ -366,6 +364,7 @@ export function AppointmentBoard({ lists }: { lists: StaffAppointmentLists }) {
                               <label className="sr-only" htmlFor={`new-time-${item.id}`}>New time</label>
                               <input
                                 id={`new-time-${item.id}`}
+                                aria-label={`New time (${BOOKING_TIMEZONE_LABEL})`}
                                 type="datetime-local"
                                 autoComplete="off"
                                 required
@@ -488,21 +487,4 @@ export function AppointmentBoard({ lists }: { lists: StaffAppointmentLists }) {
       </div>
     </div>
   );
-}
-
-/**
- * The building zone's UTC offset at a wall-clock time, as `+08:00`, so a
- * `datetime-local` value is read on the building's clock rather than the
- * guard's device's.
- */
-function zoneOffset(local: string): string {
-  const [date, time] = local.split("T");
-  const asUtc = new Date(`${date}T${time}:00Z`);
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: BOOKING_TIMEZONE,
-    timeZoneName: "longOffset",
-  }).formatToParts(asUtc);
-  const name = parts.find((part) => part.type === "timeZoneName")?.value ?? "GMT";
-  const offset = name.replace("GMT", "");
-  return offset === "" ? "Z" : offset;
 }

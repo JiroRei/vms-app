@@ -52,11 +52,11 @@ test("concurrent failed sweeps cannot bypass the newly scheduled backoff", async
   assert.equal(retried.attempts, 2);
   assert.equal(retried.nextAttemptAt.getTime() - row.nextAttemptAt.getTime(), 300_000);
 });
-test("EMAIL_MODE=test records SENT with base64 inline attachments", async () => {
+test("EMAIL_MODE=test records SENT, then keeps no body (see pass-email.test.ts)", async () => {
   assert.equal(process.env.EMAIL_MODE, "test");
   await sendEmail({ ...message, attachments: [{ filename: "qr.png", content: Buffer.from("image"), contentId: "qr" }] });
   const row = await prisma.emailOutbox.findFirstOrThrow();
-  assert.equal(row.status, "SENT"); assert.deepEqual(row.attachments, [{ filename: "qr.png", content: "aW1hZ2U=", contentId: "qr" }]);
+  assert.equal(row.status, "SENT"); assert.deepEqual(row.attachments, []); assert.ok(row.bodyClearedAt);
 });
 test("database limits enforce exact booking and verification caps under concurrency", async () => {
   for (const [key, rule] of [["email", PUBLIC_BOOKING_EMAIL_LIMIT], ["ip", PUBLIC_BOOKING_IP_LIMIT], ["verification", VERIFICATION_IP_LIMIT]] as const) {
@@ -84,6 +84,7 @@ test("isolation refuses development target even with different credentials or UR
   assert.throws(() => isolatedTestUrl(dev, dev));
   assert.throws(() => isolatedTestUrl("postgresql://a:b@localhost/vms?schema=e2e", "postgresql://c:d@localhost:5432/vms?schema=e2e&sslmode=require"));
   assert.equal(new URL(isolatedTestUrl(dev, undefined)).searchParams.get("schema"), "e2e");
+  assert.throws(() => isolatedTestUrl("postgresql://a:b@localhost/vms?schema=e2e", "postgresql://c:d@127.0.0.1:5432/vms?schema=e2e"));
 });
 test("logs mask recipients and redact codes, credentials and error messages", () => {
   const result = JSON.stringify(sanitize({ email: "test@example.invalid", code: "123456", token: "private", secret: "private", error: new Error("password leak") }));

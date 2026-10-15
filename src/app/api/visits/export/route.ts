@@ -1,15 +1,13 @@
 import { withApi } from "@/lib/api";
+import { requireAdminApi } from "@/lib/api-auth";
 import { getHistoryQuery } from "@/lib/history";
-import { getSession } from "@/lib/session";
-import { createVisitExport } from "@/lib/visit-export";
+import { loadVisitExport } from "@/lib/staff-data";
 
 export const runtime = "nodejs";
 
 async function GETHandler(request: Request) {
-  const session = await getSession();
-  if (session?.role !== "ADMIN") {
-    return Response.json({ error: "Only administrators can export visits." }, { status: 403 });
-  }
+  // 401 for anonymous callers, 403 for guards (KNOWN_ISSUES N-06).
+  await requireAdminApi("Only administrators can export visits.");
   const params: Record<string, string | string[]> = {};
   for (const [key, value] of new URL(request.url).searchParams) {
     const previous = params[key];
@@ -17,7 +15,7 @@ async function GETHandler(request: Request) {
   }
   const query = getHistoryQuery(params);
   const filename = `visits_${query.filters.from || "all"}_to_${query.filters.to || "all"}.csv`;
-  return new Response(await createVisitExport(session.userId, query), {
+  return new Response(await loadVisitExport(query), {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": `attachment; filename="${filename}"`,

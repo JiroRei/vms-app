@@ -80,3 +80,14 @@ export function parseNameParts(body: Record<string, unknown>):
     ? { ok: false, errors }
     : { ok: true, firstName, lastName };
 }
+
+/**
+ * Whether a typed last name matches the stored one, compared the way
+ * `makeNameKey` compares names (case, accents and spacing ignored). An empty
+ * typed value never matches, even against an empty stored name, so a booking
+ * with no last name cannot be claimed by typing nothing.
+ */
+export function sameLastName(typed: string, stored: string): boolean {
+  const key = keyPart(typed);
+  return key !== "" && key === keyPart(stored);
+}

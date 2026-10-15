@@ -5,7 +5,8 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { auth } from "@/lib/auth";
-import { clientIp, consumeRateLimit } from "@/lib/rate-limit";
+import { getClientIp } from "@/lib/client-ip";
+import { consumeRateLimit } from "@/lib/rate-limit";
 
 export type LoginFormState = {
   error?: string;
@@ -19,6 +20,12 @@ export type LoginFormState = {
  * the unmetered way in and the metered endpoint beside it would be pointless.
  */
 const SIGN_IN_LIMIT = { window: 60, max: 5 };
+
+/**
+ * Per account, whatever address the attempts come from, so a password spray
+ * spread over many addresses still stops (KNOWN_ISSUES M-01).
+ */
+const SIGN_IN_EMAIL_LIMIT = { window: 15 * 60, max: 10 };
 
 /**
  * Signs a staff member in and starts a Better Auth session.
@@ -40,13 +47,20 @@ export async function signIn(
 
   const requestHeaders = await headers();
   const limit = consumeRateLimit(
-    `sign-in:${clientIp(requestHeaders)}`,
+    `sign-in:${getClientIp(requestHeaders)}`,
     SIGN_IN_LIMIT,
   );
-
   if (!limit.allowed) {
     return {
       error: `Too many sign-in attempts. Try again in ${limit.retryAfter} seconds.`,
+    };
+  }
+
+  const accountLimit = consumeRateLimit(`sign-in-email:${email.toLowerCase()}`, SIGN_IN_EMAIL_LIMIT);
+
+  if (!accountLimit.allowed) {
+    return {
+      error: `Too many sign-in attempts for this account. Try again in ${Math.ceil(accountLimit.retryAfter / 60)} minutes.`,
     };
   }
 

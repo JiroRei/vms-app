@@ -1,9 +1,10 @@
 import { logger } from "@/lib/logger";
 import { withApi } from "@/lib/api";
+import { requireAdminApi, requireStaffApi } from "@/lib/api-auth";
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/session";
-import { closeStaleVisits, countStaleVisits } from "@/lib/stale-visits";
+import { loadStaleVisitCount } from "@/lib/staff-data";
+import { closeStaleVisits } from "@/lib/stale-visits";
 
 /**
  * GET /api/visits/close-stale — how many visits the cleanup would close.
@@ -12,14 +13,10 @@ import { closeStaleVisits, countStaleVisits } from "@/lib/stale-visits";
  * asking the user to approve an unknown quantity.
  */
 async function GETHandler() {
-  const session = await getSession();
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  await requireStaffApi();
 
   try {
-    return NextResponse.json({ staleCount: await countStaleVisits() });
+    return NextResponse.json({ staleCount: await loadStaleVisitCount() });
   } catch (error) {
     logger.error("GET /api/visits/close-stale failed", error);
     return NextResponse.json(
@@ -39,18 +36,7 @@ async function GETHandler() {
  * — a scheduled job can call it directly without going through this route.
  */
 async function POSTHandler() {
-  const session = await getSession();
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  if (session.role !== "ADMIN") {
-    return NextResponse.json(
-      { error: "Only administrators can close stale visits." },
-      { status: 403 },
-    );
-  }
+  await requireAdminApi("Only administrators can close stale visits.");
 
   try {
     const { closed } = await closeStaleVisits();

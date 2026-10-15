@@ -8,8 +8,9 @@ import {
   redeemAppointment,
 } from "@/lib/appointments";
 import { APPOINTMENT_FAILURE_STATUS, describeAppointmentFailure } from "@/lib/qr";
-import { clientIp, consumeRateLimit } from "@/lib/rate-limit";
-import { getSession } from "@/lib/session";
+import { getClientIp } from "@/lib/client-ip";
+import { consumeKioskCodeLimits, readKioskClaim } from "@/lib/kiosk-claim";
+import { consumeRateLimit } from "@/lib/rate-limit";
 import { notifyHostArrival } from "@/lib/host-notify";
 import {
   evaluateRecurringVisitor,
@@ -37,7 +38,7 @@ const REDEEM_LIMIT = { window: 60, max: 20 };
  */
 async function POSTHandler(request: Request) {
   const limit = consumeRateLimit(
-    `appointment-redeem:${clientIp(request.headers)}`,
+    `appointment-redeem:${getClientIp(request.headers)}`,
     REDEEM_LIMIT,
   );
 
@@ -59,7 +60,8 @@ async function POSTHandler(request: Request) {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const { token, assisted, passToken } = (body ?? {}) as Record<string, unknown>;
+  const fields = (body ?? {}) as Record<string, unknown>;
+  const { token, passToken } = fields;
   const candidate = typeof token === "string" ? token : "";
 
   if (!candidate.trim()) {
@@ -69,16 +71,16 @@ async function POSTHandler(request: Request) {
     );
   }
 
-  let checkedInBy: string | null = null;
+  // A pass vouches for its holder (re-checked below), so a pass check-in needs
+  // no last name; otherwise the kiosk rule from `readKioskClaim` applies.
+  const viaPassToken = typeof passToken === "string" && passToken !== "";
+  const claim = await readKioskClaim(fields, candidate, { viaPass: viaPassToken });
+  if (claim instanceof Response) return claim;
+  const checkedInBy = claim.assisted ? claim.session.userId : null;
 
-  if (assisted === true) {
-    const session = await getSession();
-
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    checkedInBy = session.userId;
+  if (!claim.assisted) {
+    const limited = await consumeKioskCodeLimits(candidate);
+    if (limited) return limited;
   }
 
   try {
@@ -117,7 +119,7 @@ async function POSTHandler(request: Request) {
       viaPass = { profileId: profile.id, passId: pass.pass.id };
     }
 
-    const result = await redeemAppointment(candidate, { checkedInBy, viaPass });
+    const result = await redeemAppointment(candidate, { checkedInBy, viaPass, holder: claim.holder });
 
     if (result.status === "failed") {
       return NextResponse.json(

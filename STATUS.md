@@ -19,11 +19,11 @@ check results) and [docs/screens/](./docs/screens/README.md) (screenshots; kept 
 - When a finding in [docs/KNOWN_ISSUES.md](./docs/KNOWN_ISSUES.md) is fixed,
   remove it there and note the fix in [CHANGELOG.md](./CHANGELOG.md).
 
-**Updated:** 2026-10-13
+**Updated:** 2026-10-15
 **Branch:** staging
 **Database:** local `vms` development schema `public`, automated tests in isolated schema `e2e` on PostgreSQL port 5432 (the older `vms_test` database is no longer used by the default runner)
 **Organization label:** generic `Visitor Management System` in `src/lib/site-config.ts`
-**Migrations:** 21 applied to development `public` and isolated `e2e` schemas
+**Migrations:** 23 applied to development `public` and isolated `e2e` schemas
 **Working tree:** substantial existing uncommitted work; preserve it
 
 ## Current verification
@@ -41,18 +41,19 @@ backups with point-in-time recovery; local dumps are supplementary.
 
 | Check | Result |
 | --- | --- |
-| Migration deploy | 21 migrations applied to development `public` and isolated `e2e`; none pending |
+| Migration deploy | 23 migrations applied to development `public` and isolated `e2e`; kiosk approval migration verified with 23/25-hour devices in a non-UTC database session |
 | Prisma client | Regenerated for the current schema |
-| Lint | Passed via the installed ESLint entry point |
-| TypeScript | Passed with `src/test.ts` excluded; it is an untracked raw-data file containing only zero characters |
-| Automated tests | 102 unit/service tests across 11 modules passed via `bun run test`; zero skips. Windows child-process sandbox restrictions required an approved outside-sandbox run |
-| End-to-end tests | All 11 Chromium Playwright tests passed together via `bun run test:e2e`, including the visitor workflows and both roll-call roles; zero feature skips |
+| Seed safety | Clean scratch schema migrated and seeded; target printed, repeat refused without --force, operator data/passwords preserved with --force, missing records restored; development unchanged and scratch dropped |
+| Lint | Passed; two existing unused-variable warnings in `src/test.ts` |
+| TypeScript | Passed via the production build and installed TypeScript entry point, using project tsconfig exclusions |
+| Automated tests | 130 unit/service tests across 17 modules (26 suites) passed; zero skips. Ran the package test command through the installed Node entry point; Windows child-process sandbox restrictions required approved execution access |
+| End-to-end tests | All 18 Chromium Playwright tests passed together via `scripts/run-e2e.ts`; includes access matrix, kiosk approval/dismissal/limits and staff create/reschedule/history boundaries in UTC and America/Los_Angeles; zero skips |
 | Emergency roll-call | Guard/admin browser tests passed for access, ticks after refresh/reload/polling, clearing and print styles. Four-page A4 portrait PDFs visually checked; native Chrome preview unavailable |
 | HTTP robustness | Health 200 and simulated DB-failure 503, bounded heartbeat input, consistent API errors, email retry/expiry, persistent booking/lookup limits, kiosk alerts and admin controls verified |
-| Development isolation | Read-only audit found no E2E fixtures in development; all verification fixtures were removed from isolated `e2e` after the full browser suite |
+| Development isolation | No E2E staff/profile/appointment fixtures in development; all 18 isolated test tables verified empty after testing. Development retains seed/demo data and historical test records; five referenced `[test]` purpose options were deactivated (none unused to delete) |
 | Dev server | Restarted hidden on port 3000; `/api/health` returned 200 with database status `ok`; logs in gitignored `logs/` |
 | Earlier HTTP verification | Reporting, booking-pass and password-reset suites passed before this robustness work; their temporary fixtures were removed |
-| Production build | Passed; local build logs warnings because `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL` are not configured |
+| Production build | Passed with configured local auth secrets; the pg concurrent-query deprecation remains (traced to Prisma internal transaction queries, not a trivial local fix) |
 | Excel and print preview | Manual export/print verification remains pending; application workflows are covered by Playwright |
 
 The complete current commands are in [README.md](./README.md). Reporting,

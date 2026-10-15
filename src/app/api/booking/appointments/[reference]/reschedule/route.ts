@@ -13,7 +13,8 @@ import {
 } from "@/lib/appointment-responses";
 import { rescheduleAppointment } from "@/lib/appointments";
 import { checkSlot } from "@/lib/booking-config";
-import { clientIp, consumeRateLimit } from "@/lib/rate-limit";
+import { getClientIp } from "@/lib/client-ip";
+import { consumeRateLimit } from "@/lib/rate-limit";
 
 const LIMIT = { window: 60, max: 10 };
 
@@ -36,7 +37,7 @@ async function POSTHandler(
   context: RouteContext<"/api/booking/appointments/[reference]/reschedule">,
 ) {
   const limit = consumeRateLimit(
-    `appointment-self-service:${clientIp(request.headers)}`,
+    `appointment-self-service:${getClientIp(request.headers)}`,
     LIMIT,
   );
 

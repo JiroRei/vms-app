@@ -13,9 +13,11 @@
  *     do not survive a restart or a dev-server reload. For a single-site VMS on
  *     one node that is the whole population; behind a load balancer it becomes
  *     approximate, and the limits would need to move to Postgres or Redis.
- *   - **Not a defence against a determined attacker on the LAN**, who can
- *     spoof `x-forwarded-for`. It is there to stop a script from walking the
- *     appointment reference space or grinding passwords at machine speed.
+ *   - **Keyed by caller identity from `getClientIp()`** (`src/lib/client-ip.ts`),
+ *     which ignores client-supplied forwarding headers unless
+ *     `TRUSTED_PROXY_COUNT` says a proxy wrote them. Sensitive endpoints add a
+ *     second limit keyed by email, reference number, device or account, so
+ *     changing address does not reset the count either.
  */
 import "server-only";
 
@@ -43,9 +45,9 @@ const buckets = new Map<string, Bucket>();
 /**
  * Drop windows that have already closed.
  *
- * Every distinct key allocates an entry, and the key includes a caller-supplied
- * IP, so without this a stream of forged addresses would grow the map without
- * bound. Sweeping on a size threshold keeps the common path — a handful of
+ * Every distinct key allocates an entry, and keys include caller-supplied
+ * values (emails, reference numbers), so without this a stream of distinct
+ * values would grow the map without bound. Sweeping on a size threshold keeps the common path — a handful of
  * kiosks and staff — free of per-request bookkeeping.
  */
 function pruneExpired(now: number): void {
@@ -90,27 +92,6 @@ export function consumeRateLimit(
 
   existing.count += 1;
   return { allowed: true, retryAfter };
-}
-
-/**
- * Best-effort caller identity for a rate-limit key.
- *
- * `x-forwarded-for` is the first entry of the proxy chain; it is trivially
- * forged by anything talking to the server directly, which is why the limits
- * that use it are sized as a brake on automation rather than as an access
- * control. Requests with no forwarding header at all — a kiosk on the LAN
- * hitting the server directly — collapse onto one shared key, so per-IP limits
- * must stay generous enough for the busiest single terminal.
- */
-export function clientIp(headers: Headers): string {
-  const forwarded = headers.get("x-forwarded-for");
-
-  if (forwarded) {
-    const first = forwarded.split(",")[0]?.trim();
-    if (first) return first;
-  }
-
-  return headers.get("x-real-ip")?.trim() || "unknown";
 }
 
 /** Clears every window. Exists so a test can start from a known state. */

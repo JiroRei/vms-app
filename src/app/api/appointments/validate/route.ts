@@ -2,7 +2,9 @@ import { logger } from "@/lib/logger";
 import { withApi } from "@/lib/api";
 import { NextResponse } from "next/server";
 
-import { clientIp, consumeRateLimit } from "@/lib/rate-limit";
+import { getClientIp } from "@/lib/client-ip";
+import { consumeKioskCodeLimits, readKioskClaim } from "@/lib/kiosk-claim";
+import { consumeRateLimit } from "@/lib/rate-limit";
 import {
   APPOINTMENT_FAILURE_STATUS,
   validateAppointmentToken,
@@ -27,10 +29,13 @@ const LOOKUP_LIMIT = { window: 60, max: 30 };
  *
  * Public, like the rest of the kiosk. Reads nothing out unless the code is
  * valid, so an attacker learns only whether a code they already hold works.
+ * On the kiosk a typed reference number also needs the booking's last name;
+ * a guard (`assisted: true`, signed in) looks up by reference alone. See
+ * `src/lib/kiosk-claim.ts` for that rule and the per-code and global limits.
  */
 async function POSTHandler(request: Request) {
   const limit = consumeRateLimit(
-    `appointment-lookup:${clientIp(request.headers)}`,
+    `appointment-lookup:${getClientIp(request.headers)}`,
     LOOKUP_LIMIT,
   );
 
@@ -52,8 +57,8 @@ async function POSTHandler(request: Request) {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const { token } = (body ?? {}) as Record<string, unknown>;
-  const candidate = typeof token === "string" ? token : "";
+  const fields = (body ?? {}) as Record<string, unknown>;
+  const candidate = typeof fields.token === "string" ? fields.token : "";
 
   if (!candidate.trim()) {
     return NextResponse.json(
@@ -62,8 +67,16 @@ async function POSTHandler(request: Request) {
     );
   }
 
+  const claim = await readKioskClaim(fields, candidate);
+  if (claim instanceof Response) return claim;
+
+  if (!claim.assisted) {
+    const limited = await consumeKioskCodeLimits(candidate);
+    if (limited) return limited;
+  }
+
   try {
-    const result = await validateAppointmentToken(candidate);
+    const result = await validateAppointmentToken(candidate, claim.holder);
 
     if (!result.ok) {
       return NextResponse.json(

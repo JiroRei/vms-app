@@ -1,12 +1,13 @@
 import { logger } from "@/lib/logger";
 import { withApi } from "@/lib/api";
+import { requireStaffApi } from "@/lib/api-auth";
 import { after, NextResponse } from "next/server";
 
 import { readJsonBody } from "@/lib/appointment-responses";
 import { prisma } from "@/lib/prisma";
 import { findSelectablePurpose } from "@/lib/purposes";
-import { clientIp, consumeRateLimit } from "@/lib/rate-limit";
-import { getSession } from "@/lib/session";
+import { getClientIp } from "@/lib/client-ip";
+import { consumeRateLimit } from "@/lib/rate-limit";
 import { notifyHostArrival } from "@/lib/host-notify";
 import { createWalkInVisit } from "@/lib/visits";
 import {
@@ -29,7 +30,7 @@ const CHECK_IN_LIMIT = { window: 60, max: 20 };
  * the guard, exactly as for appointments.
  */
 async function POSTHandler(request: Request) {
-  const limit = consumeRateLimit(`check-in:${clientIp(request.headers)}`, CHECK_IN_LIMIT);
+  const limit = consumeRateLimit(`check-in:${getClientIp(request.headers)}`, CHECK_IN_LIMIT);
 
   if (!limit.allowed) {
     return NextResponse.json(
@@ -49,10 +50,7 @@ async function POSTHandler(request: Request) {
   let checkedInBy: string | null = null;
 
   if (body.assisted === true) {
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const session = await requireStaffApi();
     checkedInBy = session.userId;
   }
 

@@ -1,10 +1,10 @@
 import { logger } from "@/lib/logger";
 import { withApi } from "@/lib/api";
+import { requireStaffApi } from "@/lib/api-auth";
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
 import { createDeliveryLog } from "@/lib/visits";
-import { getSession } from "@/lib/session";
 
 /** Caps on the free-text fields, so a paste cannot write an essay to the table. */
 const MAX_NAME = 120;
@@ -24,11 +24,7 @@ const MAX_NOTE = 280;
  * different destinations.
  */
 async function POSTHandler(request: Request) {
-  const session = await getSession();
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const session = await requireStaffApi();
 
   let body: unknown;
 

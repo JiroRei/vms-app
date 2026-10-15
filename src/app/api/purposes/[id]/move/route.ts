@@ -1,5 +1,6 @@
 import { logger } from "@/lib/logger";
 import { withApi } from "@/lib/api";
+import { requireAdminApi } from "@/lib/api-auth";
 import { NextResponse } from "next/server";
 
 // TODO(multi-tenancy): reordering renumbers the whole global list. Once
@@ -7,7 +8,6 @@ import { NextResponse } from "next/server";
 // organizationId, or moving one option will rewrite every other organization's
 // ordering. See MULTI_TENANCY_TODO.md.
 
-import { requireAdmin } from "@/lib/api-auth";
 import { movePurposeOption } from "@/lib/purposes";
 
 /**
@@ -22,8 +22,7 @@ async function POSTHandler(
   request: Request,
   context: RouteContext<"/api/purposes/[id]/move">,
 ) {
-  const denied = await requireAdmin();
-  if (denied) return denied;
+  await requireAdminApi();
 
   const { id } = await context.params;
 

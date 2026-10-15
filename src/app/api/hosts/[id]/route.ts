@@ -1,9 +1,9 @@
 import { logger } from "@/lib/logger";
 import { withApi } from "@/lib/api";
+import { requireAdminApi } from "@/lib/api-auth";
 import { NextResponse } from "next/server";
 
 import { updateHost } from "@/lib/hosts";
-import { getSession } from "@/lib/session";
 
 /**
  * PATCH /api/hosts/[id] — rename a host, move their department, or switch them
@@ -19,18 +19,7 @@ async function PATCHHandler(
   request: Request,
   context: RouteContext<"/api/hosts/[id]">,
 ) {
-  const session = await getSession();
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  if (session.role !== "ADMIN") {
-    return NextResponse.json(
-      { error: "Only administrators can change the host directory." },
-      { status: 403 },
-    );
-  }
+  await requireAdminApi("Only administrators can change the host directory.");
 
   const { id } = await context.params;
 

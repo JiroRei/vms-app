@@ -1,10 +1,10 @@
 import { logger } from "@/lib/logger";
 import { withApi } from "@/lib/api";
+import { requireStaffApi } from "@/lib/api-auth";
 import { after, NextResponse } from "next/server";
 
 import { redeemAppointment } from "@/lib/appointments";
 import { APPOINTMENT_FAILURE_STATUS } from "@/lib/qr";
-import { getSession } from "@/lib/session";
 import { evaluateRecurringVisitor } from "@/lib/visitor-pass";
 import { notifyHostArrival } from "@/lib/host-notify";
 
@@ -20,11 +20,7 @@ async function POSTHandler(
   _request: Request,
   context: RouteContext<"/api/appointments/manage/[reference]/check-in">,
 ) {
-  const session = await getSession();
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const session = await requireStaffApi();
 
   const { reference } = await context.params;
 

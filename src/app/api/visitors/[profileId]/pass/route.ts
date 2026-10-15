@@ -1,9 +1,9 @@
 import { logger } from "@/lib/logger";
 import { withApi } from "@/lib/api";
+import { requireStaffApi } from "@/lib/api-auth";
 import { after, NextResponse } from "next/server";
 
 import { readJsonBody } from "@/lib/appointment-responses";
-import { getSession } from "@/lib/session";
 import {
   emailPass,
   getActivePass,
@@ -27,11 +27,7 @@ async function POSTHandler(
   request: Request,
   context: RouteContext<"/api/visitors/[profileId]/pass">,
 ) {
-  const session = await getSession();
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const session = await requireStaffApi();
 
   const { profileId } = await context.params;
   const { action } = await readJsonBody(request);

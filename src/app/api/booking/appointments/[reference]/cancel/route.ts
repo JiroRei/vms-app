@@ -9,7 +9,8 @@ import {
   readJsonBody,
 } from "@/lib/appointment-responses";
 import { cancelAppointment } from "@/lib/appointments";
-import { clientIp, consumeRateLimit } from "@/lib/rate-limit";
+import { getClientIp } from "@/lib/client-ip";
+import { consumeRateLimit } from "@/lib/rate-limit";
 
 const LIMIT = { window: 60, max: 10 };
 
@@ -27,7 +28,7 @@ async function POSTHandler(
   context: RouteContext<"/api/booking/appointments/[reference]/cancel">,
 ) {
   const limit = consumeRateLimit(
-    `appointment-self-service:${clientIp(request.headers)}`,
+    `appointment-self-service:${getClientIp(request.headers)}`,
     LIMIT,
   );
 

@@ -5,10 +5,23 @@ const sensitive = /password|secret|token|authorization|cookie|code|html|text|att
 export function maskEmail(value: string): string {
   return value.replace(/[^\s@]+@([^\s@]+)/g, "***@$1");
 }
+/**
+ * Credentials that can turn up inside free text: 6-digit booking codes, visitor
+ * pass tokens, secrets in URL query strings (manage and password-reset links
+ * carry `?token=`), bearer tokens and inline images (a QR is a credential).
+ */
+export function redactSecrets(value: string): string {
+  return value
+    .replace(/\b\d{6}\b/g, "[redacted]")
+    .replace(/\bvp1\.[\w.-]+/g, "[redacted]")
+    .replace(/([?&](?:token|code|sig|signature|key|secret)=)[^&\s"'<>]+/gi, "$1[redacted]")
+    .replace(/\bBearer\s+[\w.~+/=-]+/gi, "Bearer [redacted]")
+    .replace(/data:image\/[\w.+-]+;base64,[A-Za-z0-9+/=]+/g, "[redacted image]");
+}
 export function sanitize(value: unknown, depth = 0): unknown {
   if (depth > 5) return "[omitted]";
   if (value instanceof Error) return { name: value.name }; // Error messages may contain credentials or SQL.
-  if (typeof value === "string") return maskEmail(value).replace(/\b\d{6}\b/g, "[redacted]").replace(/\bvp1\.[\w.-]+/g, "[redacted]").slice(0, 1000);
+  if (typeof value === "string") return redactSecrets(maskEmail(value)).slice(0, 1000);
   if (Array.isArray(value)) return value.slice(0, 20).map((item) => sanitize(item, depth + 1));
   if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sensitive.test(key) ? "[redacted]" : sanitize(item, depth + 1)]));
   return value;

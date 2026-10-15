@@ -1,10 +1,8 @@
 "use client";
 import { apiErrorMessage } from "@/lib/api-error-message";
-
-
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-
+import { BOOKING_TIMEZONE_LABEL } from "@/lib/booking-config";
 import { NameFields } from "@/components/name-fields";
 import { formatFullName, validateNameParts } from "@/lib/names";
 import type { PurposeChoice } from "@/lib/purposes";
@@ -150,9 +148,8 @@ export function AppointmentManager({
           visitorEmail: visitorEmail.trim(),
           purposeId,
           hostId,
-          // `datetime-local` gives a wall-clock string with no zone; letting
-          // Date read it as local time and sending ISO is what keeps "2pm" 2pm.
-          scheduledFor: scheduledFor ? new Date(scheduledFor).toISOString() : null,
+          // The server converts this wall-clock value in the site zone.
+          scheduledFor,
         }),
       });
 
@@ -352,7 +349,7 @@ export function AppointmentManager({
 
             <div>
               <label htmlFor="scheduledFor" className={labelClass}>
-                Expected
+                Expected ({BOOKING_TIMEZONE_LABEL})
               </label>
               <input
                 autoComplete="off"

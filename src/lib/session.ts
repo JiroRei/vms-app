@@ -8,6 +8,7 @@
 import "server-only";
 
 import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { cache } from "react";
 
 import { Role } from "@/generated/prisma/enums";
@@ -55,3 +56,35 @@ export const getSession = cache(async function getSession(): Promise<StaffSessio
     role: toRole(result.user.role),
   };
 });
+
+/**
+ * The signed-in staff member, or a redirect to /login.
+ *
+ * Call this at the top of every dashboard page and in every function that
+ * loads staff-only data (see `src/lib/staff-data.ts`). The dashboard layout's
+ * own check is for the visual shell only: Next.js renders a page in parallel
+ * with its layout, and an RSC request (`RSC: 1`) can fetch a page segment
+ * without the layout at all, so a check that lives only in the layout does
+ * not protect the page's data (KNOWN_ISSUES B-01).
+ *
+ * `redirect` throws, so nothing after this call runs for an anonymous request.
+ */
+export async function requireStaff(): Promise<StaffSession> {
+  const session = await getSession();
+  if (!session) redirect("/login");
+  return session;
+}
+
+/**
+ * The signed-in administrator. Anonymous callers go to /login; guards go back
+ * to /dashboard before any admin data is read.
+ *
+ * `src/proxy.ts` already answers guards with a real 403 before rendering
+ * starts; this is the check next to the data, for when the proxy is bypassed
+ * or misconfigured.
+ */
+export async function requireAdmin(): Promise<StaffSession> {
+  const session = await requireStaff();
+  if (session.role !== Role.ADMIN) redirect("/dashboard");
+  return session;
+}

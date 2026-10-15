@@ -1,23 +1,20 @@
-import { redirect } from "next/navigation";
-
 import { PrintButton, PrintFooter } from "@/components/print-button";
 import { PrintTable } from "@/components/print-table";
 import { dateKeyInZone, zonedTimeToUtc } from "@/lib/booking-config";
 import { formatFullName } from "@/lib/names";
-import { getDailyRegister } from "@/lib/register";
-import { getSession } from "@/lib/session";
+import { requireStaff } from "@/lib/session";
+import { loadDailyRegister } from "@/lib/staff-data";
 import { ORGANIZATION_NAME, SITE_TIMEZONE_LABEL } from "@/lib/site-config";
 import { reportTimestamp } from "@/lib/visit-report";
 
 export default async function RegisterPage({ searchParams }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const session = await getSession();
-  if (!session) redirect("/login");
+  const session = await requireStaff();
   const params = await searchParams;
   let date = typeof params.date === "string" ? params.date : dateKeyInZone(new Date());
   try { zonedTimeToUtc(date, "00:00"); } catch { date = dateKeyInZone(new Date()); }
-  const { visits, summary } = await getDailyRegister(date);
+  const { visits, summary } = await loadDailyRegister(date);
   const title = `Visitor Register: ${ORGANIZATION_NAME} - ${date}`;
 
   return (

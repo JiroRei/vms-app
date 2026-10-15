@@ -1,5 +1,6 @@
-import { listStaffAppointments } from "@/lib/appointments";
 import { getActivePurposeOptions } from "@/lib/purposes";
+import { requireStaff } from "@/lib/session";
+import { loadStaffAppointments } from "@/lib/staff-data";
 import { getHosts } from "@/lib/visits";
 
 import { AppointmentBoard } from "./appointment-board";
@@ -9,10 +10,9 @@ import { AppointmentManager } from "./appointment-manager";
 export const dynamic = "force-dynamic";
 
 export default async function AppointmentsPage() {
-  // The session guard lives in `src/app/dashboard/layout.tsx`, which redirects
-  // to /login before this renders.
+  await requireStaff();
   const [lists, hosts, purposes] = await Promise.all([
-    listStaffAppointments(),
+    loadStaffAppointments(),
     getHosts(),
     getActivePurposeOptions(),
   ]);

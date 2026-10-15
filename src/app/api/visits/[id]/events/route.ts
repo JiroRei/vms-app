@@ -1,9 +1,9 @@
 import { logger } from "@/lib/logger";
 import { withApi } from "@/lib/api";
+import { requireStaffApi } from "@/lib/api-auth";
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/session";
-import { getVisitEvents } from "@/lib/visits";
+import { loadVisitEvents } from "@/lib/staff-data";
 
 /**
  * GET /api/visits/[id]/events — one visit's timeline, oldest first.
@@ -17,16 +17,12 @@ async function GETHandler(
   _request: Request,
   context: RouteContext<"/api/visits/[id]/events">,
 ) {
-  const session = await getSession();
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  await requireStaffApi();
 
   const { id } = await context.params;
 
   try {
-    const timeline = await getVisitEvents(id);
+    const timeline = await loadVisitEvents(id);
 
     if (!timeline) {
       return NextResponse.json({ error: "Visit not found." }, { status: 404 });

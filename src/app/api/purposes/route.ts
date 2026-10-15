@@ -1,5 +1,6 @@
 import { logger } from "@/lib/logger";
 import { withApi } from "@/lib/api";
+import { requireAdminApi } from "@/lib/api-auth";
 import { NextResponse } from "next/server";
 
 // TODO(multi-tenancy): this route creates options in one global list shared by
@@ -8,7 +9,6 @@ import { NextResponse } from "next/server";
 // organizations must be able to have their own "Meeting" without colliding.
 // See MULTI_TENANCY_TODO.md.
 
-import { requireAdmin } from "@/lib/api-auth";
 import { createPurposeOption } from "@/lib/purposes";
 
 const MAX_LABEL = 80;
@@ -20,8 +20,7 @@ const MAX_LABEL = 80;
  * control: this check is.
  */
 async function POSTHandler(request: Request) {
-  const denied = await requireAdmin();
-  if (denied) return denied;
+  await requireAdminApi();
 
   let body: unknown;
 

@@ -8,9 +8,9 @@ import {
 } from "@/lib/booking-verification";
 import { sendVerificationCodeEmail } from "@/lib/email";
 import { parseNameParts } from "@/lib/names";
-import { VERIFICATION_IP_LIMIT } from "@/lib/booking-config";
+import { VERIFICATION_EMAIL_LIMIT, VERIFICATION_IP_LIMIT } from "@/lib/booking-config";
 import { consumeDatabaseRateLimit } from "@/lib/database-rate-limit";
-import { clientIp } from "@/lib/rate-limit";
+import { getClientIp } from "@/lib/client-ip";
 
 const MAX_EMAIL = 200;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
@@ -26,7 +26,7 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
  * address alike — see `issueVerificationCode()`.
  */
 async function POSTHandler(request: Request) {
-  const limit = await consumeDatabaseRateLimit(`verification-lookup:${clientIp(request.headers)}`, VERIFICATION_IP_LIMIT);
+  const limit = await consumeDatabaseRateLimit(`verification-lookup:${getClientIp(request.headers)}`, VERIFICATION_IP_LIMIT);
   if (!limit.allowed) return NextResponse.json({ error: "Too many code requests. Please wait 15 minutes and try again." }, { status: 429, headers: { "Retry-After": String(limit.retryAfter) } });
   let body: unknown;
 
@@ -49,6 +49,11 @@ async function POSTHandler(request: Request) {
   if (!name.ok || Object.keys(fieldErrors).length > 0) {
     return NextResponse.json({ fieldErrors }, { status: 400 });
   }
+
+  // Per address as well as per caller, so rotating addresses cannot flood one
+  // inbox with codes (KNOWN_ISSUES M-01).
+  const emailLimit = await consumeDatabaseRateLimit(`verification-lookup-email:${value.toLowerCase()}`, VERIFICATION_EMAIL_LIMIT);
+  if (!emailLimit.allowed) return NextResponse.json({ error: "Too many codes requested for this email. Please wait 15 minutes and try again." }, { status: 429, headers: { "Retry-After": String(emailLimit.retryAfter) } });
 
   try {
     const result = await issueVerificationCode({
