@@ -1,7 +1,13 @@
-import { NextResponse } from "next/server";
+import { logger } from "@/lib/logger";
+import { withApi } from "@/lib/api";
+import { after, NextResponse } from "next/server";
 
-import { createAppointment } from "@/lib/appointments";
-import { sendAppointmentEmail } from "@/lib/email";
+import { appBaseUrl } from "@/lib/appointment-access";
+import { emailAppointment } from "@/lib/appointment-notify";
+import {
+  AppointmentSlotUnavailableError,
+  createAppointment,
+} from "@/lib/appointments";
 import { parseNameParts } from "@/lib/names";
 import { prisma } from "@/lib/prisma";
 import { findSelectablePurpose } from "@/lib/purposes";
@@ -22,7 +28,7 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
  * saw the form), and the time is any future moment rather than one of the
  * public booking slots, because the desk may need to fit someone in.
  */
-export async function POST(request: Request) {
+async function POSTHandler(request: Request) {
   const session = await getSession();
 
   if (!session) {
@@ -110,18 +116,11 @@ export async function POST(request: Request) {
       scheduledFor: scheduled as Date,
       verified: null,
       consentAcceptedAt: null,
+      actor: { type: "STAFF", userId: session.userId },
     });
 
-    const sent = await sendAppointmentEmail({
-      firstName: appointment.firstName,
-      visitorEmail: appointment.visitorEmail,
-      referenceNumber: appointment.referenceNumber,
-      qrToken: appointment.qrToken,
-      purposeLabel: appointment.purposeLabel,
-      hostName: appointment.hostName,
-      hostDepartment: appointment.hostDepartment,
-      scheduledFor: appointment.scheduledFor,
-    });
+    const baseUrl = appBaseUrl(request);
+    after(() => emailAppointment(appointment, baseUrl, "confirmed"));
 
     return NextResponse.json(
       {
@@ -131,15 +130,24 @@ export async function POST(request: Request) {
           lastName: appointment.lastName,
           visitorEmail: appointment.visitorEmail,
         },
-        emailSent: sent.sent,
+        emailSent: false,
+        emailQueued: true,
       },
       { status: 201 },
     );
   } catch (error) {
-    console.error("POST /api/appointments/manage failed", error);
+    if (error instanceof AppointmentSlotUnavailableError) {
+      return NextResponse.json(
+        { fieldErrors: { scheduledFor: "That host is already booked for this time. Please choose another time." } },
+        { status: 409 },
+      );
+    }
+    logger.error("POST /api/appointments/manage failed", error);
     return NextResponse.json(
       { error: "Could not create this appointment." },
       { status: 500 },
     );
   }
 }
+
+export const POST = withApi(POSTHandler);

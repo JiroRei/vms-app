@@ -9,12 +9,10 @@
  * spanning `<td>`.
  */
 export function EmptyState({
-  icon,
   title,
   hint,
   action,
 }: {
-  icon: string;
   title: string;
   hint?: string;
   /** Optional escape hatch, e.g. a link that clears the active filters. */
@@ -22,9 +20,6 @@ export function EmptyState({
 }) {
   return (
     <div className="flex flex-col items-center gap-1 px-4 py-12 text-center">
-      <span className="text-3xl" aria-hidden>
-        {icon}
-      </span>
       <p className="text-sm font-semibold text-gray-900 dark:text-white">
         {title}
       </p>

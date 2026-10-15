@@ -1,4 +1,6 @@
 "use client";
+import { apiErrorMessage } from "@/lib/api-error-message";
+
 
 import Image from "next/image";
 import Link from "next/link";
@@ -54,6 +56,9 @@ type Confirmation = {
   };
   qrDataUrl: string | null;
   emailSent: boolean;
+  emailQueued?: boolean;
+  /** The same signed manage link the confirmation email carries. */
+  manageUrl: string;
 };
 
 /** 0 is the "visited before?" question; 1–4 are the numbered steps. */
@@ -321,7 +326,12 @@ export function BookingForm({
       const data = await response.json().catch(() => null);
 
       if (!response.ok) {
-        if (data?.fieldErrors) {
+        if (data?.reauthenticate) {
+          setVerified(null);
+          setReturning(true);
+          goTo(1);
+          setFormError(apiErrorMessage(data.error) ?? "Please sign in again.");
+        } else if (data?.fieldErrors) {
           const serverErrors = data.fieldErrors as FieldErrors;
           // Send the visitor back to the earliest step with a problem.
           const earliest = Math.min(
@@ -332,7 +342,7 @@ export function BookingForm({
           setStep(earliest);
           setFieldErrors(serverErrors);
         } else {
-          setFormError(data?.error ?? "Could not book this visit.");
+          setFormError(apiErrorMessage(data?.error) ?? "Could not book this visit.");
         }
 
         return;
@@ -347,14 +357,11 @@ export function BookingForm({
   }
 
   if (confirmation) {
-    const { appointment, qrDataUrl, emailSent } = confirmation;
+    const { appointment, qrDataUrl, emailSent, emailQueued, manageUrl } = confirmation;
 
     return (
       <div className="space-y-6">
         <div className="space-y-2 text-center">
-          <span className="text-5xl" role="img" aria-label="Booked">
-            ✅
-          </span>
           <h1 className="text-2xl font-bold tracking-tight text-gray-900">
             Your visit is booked
           </h1>
@@ -418,15 +425,20 @@ export function BookingForm({
 
         <p
           className={`rounded-lg px-3 py-2 text-sm ${
-            emailSent
+            emailSent || emailQueued
               ? "bg-green-50 text-green-800"
               : "bg-amber-50 text-amber-800"
           }`}
         >
           {emailSent
             ? `We have emailed your QR code to ${appointment.visitorEmail}.`
+            : emailQueued ? `Your QR code is queued for delivery to ${appointment.visitorEmail}. Save this page or write down your reference number so you can check in while waiting.`
             : "We could not email your QR code just now. Save this page or write down the reference number above — it is all you need to check in."}
         </p>
+
+        <a href={manageUrl} className={`${secondaryButtonClass} w-full`}>
+          Manage this appointment
+        </a>
       </div>
     );
   }
@@ -462,7 +474,7 @@ export function BookingForm({
             },
             {
               label: "I've been here before",
-              hint: "Use the details from a previous visit",
+              hint: "Use your visitor pass or saved details",
               isReturning: true,
             },
           ].map((choice) => (
@@ -505,7 +517,9 @@ export function BookingForm({
         <h2 ref={headingRef} tabIndex={-1} className={headingClass}>
           Welcome back
         </h2>
+        {formError && <p role="alert" className={errorClass}>{formError}</p>}
         <ReturningLookup
+          allowPass
           initialEmail={form.visitorEmail}
           onVerified={handleVerified}
           initialFirstName={form.firstName}
@@ -565,7 +579,7 @@ export function BookingForm({
             id="visitorEmail"
             type="email"
             inputMode="email"
-            autoComplete="email"
+            autoComplete="off"
             readOnly={Boolean(verified)}
             value={form.visitorEmail}
             onChange={(event) => update("visitorEmail", event.target.value)}
@@ -595,7 +609,7 @@ export function BookingForm({
             id="visitorPhone"
             type="tel"
             inputMode="tel"
-            autoComplete="tel"
+            autoComplete="off"
             value={form.visitorPhone}
             onChange={(event) => update("visitorPhone", event.target.value)}
             placeholder="+63 900 000 0000"
@@ -642,6 +656,7 @@ export function BookingForm({
             Purpose of visit
           </label>
           <select
+            autoComplete="off"
             id="purposeId"
             value={form.purposeId}
             onChange={(event) => update("purposeId", event.target.value)}
@@ -723,6 +738,7 @@ export function BookingForm({
         <div>
           <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-gray-200 bg-white p-4">
             <input
+              autoComplete="off"
               type="checkbox"
               checked={form.consent}
               onChange={(event) => update("consent", event.target.checked)}

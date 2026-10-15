@@ -1,4 +1,6 @@
 "use client";
+import { apiErrorMessage } from "@/lib/api-error-message";
+
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -47,7 +49,7 @@ export function CloseStaleVisits() {
       const data = await response.json().catch(() => null);
 
       if (!response.ok) {
-        showToast(data?.error ?? "Could not close stale visits.", "error");
+        showToast(apiErrorMessage(data?.error) ?? "Could not close stale visits.", "error");
         setStage("idle");
         return;
       }
@@ -98,7 +100,7 @@ export function CloseStaleVisits() {
                   ? "Checking…"
                   : staleCount === 0
                     ? "There are no visits left open from a previous day."
-                    : `${staleCount} ${staleCount === 1 ? "visit is" : "visits are"} still open from a previous day. Each will be checked out at the end of the day it started.`}
+                    : `${staleCount} ${staleCount === 1 ? "visit is" : "visits are"} still open from a previous day. Each will be marked auto-closed at the end of the day it started, or when they stepped out.`}
               </p>
               <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">
                 This cannot be undone.

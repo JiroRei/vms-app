@@ -3,6 +3,12 @@ import "server-only";
 import QRCode from "qrcode";
 
 import type { AppointmentStatus } from "@/generated/prisma/enums";
+import {
+  CHECK_IN_EARLY_MINUTES,
+  dateKeyInZone,
+  formatZonedDate,
+  formatZonedTime,
+} from "@/lib/booking-config";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -57,7 +63,9 @@ export type AppointmentTokenFailure =
   | "NOT_FOUND"
   | "ALREADY_USED"
   | "EXPIRED"
-  | "CANCELLED";
+  | "CANCELLED"
+  | "WRONG_DAY"
+  | "TOO_EARLY";
 
 /** What a surface shows once a code checks out. */
 export type ValidatedAppointment = {
@@ -76,23 +84,26 @@ export type ValidatedAppointment = {
 
 export type AppointmentTokenResult =
   | { ok: true; appointment: ValidatedAppointment }
-  | { ok: false; reason: AppointmentTokenFailure };
+  | { ok: false; reason: AppointmentTokenFailure; message: string };
+
+/** The fields the rules below read. */
+type ClassifiableAppointment = {
+  status: AppointmentStatus;
+  scheduledFor: Date;
+  expiresAt: Date;
+};
 
 /**
- * The rule for whether an appointment may still be redeemed, with no database
- * access of its own.
- *
- * Split out so `validateAppointmentToken()` and the redemption in
- * `src/lib/appointments.ts` decide by the same rule — the second has to re-check
- * inside its transaction, and that re-check must not be allowed to drift from
- * what the kiosk was told a moment earlier.
+ * Whether an appointment is still alive at all: not cancelled, not used, not
+ * lapsed. The staff list uses this on its own to mean "still expected"; the
+ * check-in rule below adds the time-of-day window on top.
  *
  * Order is deliberate. A cancelled or already-used appointment says so even once
  * it has also lapsed, because "you already checked in" is a more useful thing to
  * hear at a desk than "that expired".
  */
-export function classifyAppointment(
-  appointment: { status: AppointmentStatus; expiresAt: Date },
+export function lifecycleFailure(
+  appointment: ClassifiableAppointment,
   now: Date = new Date(),
 ): AppointmentTokenFailure | null {
   if (appointment.status === "CANCELLED") return "CANCELLED";
@@ -101,6 +112,80 @@ export function classifyAppointment(
   if (appointment.expiresAt.getTime() <= now.getTime()) return "EXPIRED";
 
   return null;
+}
+
+/** When check-in opens for an appointment: `CHECK_IN_EARLY_MINUTES` before it. */
+export function checkInOpensAt(scheduledFor: Date): Date {
+  return new Date(scheduledFor.getTime() - CHECK_IN_EARLY_MINUTES * 60_000);
+}
+
+/**
+ * The rule for whether an appointment may be redeemed right now, with no
+ * database access of its own.
+ *
+ * Split out so `validateAppointmentToken()` and the redemption in
+ * `src/lib/appointments.ts` decide by the same rule — the second has to re-check
+ * inside its transaction, and that re-check must not be allowed to drift from
+ * what the kiosk was told a moment earlier.
+ *
+ * On top of `lifecycleFailure()`: a code for a later day is refused outright
+ * (WRONG_DAY), and on its own day it opens `CHECK_IN_EARLY_MINUTES` before the
+ * scheduled time (TOO_EARLY). Days are the building's, in `BOOKING_TIMEZONE`.
+ * Arriving late is fine until `expiresAt`, which may run past midnight.
+ */
+export function classifyAppointment(
+  appointment: ClassifiableAppointment,
+  now: Date = new Date(),
+): AppointmentTokenFailure | null {
+  const lifecycle = lifecycleFailure(appointment, now);
+  if (lifecycle) return lifecycle;
+
+  if (dateKeyInZone(appointment.scheduledFor) > dateKeyInZone(now)) {
+    return "WRONG_DAY";
+  }
+
+  if (now.getTime() < checkInOpensAt(appointment.scheduledFor).getTime()) {
+    return "TOO_EARLY";
+  }
+
+  return null;
+}
+
+/**
+ * The plain-language reason a code was refused, built from the appointment
+ * itself so it can name the times involved. Every surface — kiosk camera,
+ * kiosk keypad, guard scanner, staff one-click check-in — shows this text.
+ * Times are on the building's clock.
+ *
+ * `checkedInAt` is the time of the visit an ALREADY_USED appointment became,
+ * when known (appointments redeemed before visits were linked have none).
+ */
+export function describeAppointmentFailure(
+  reason: AppointmentTokenFailure,
+  appointment: { scheduledFor: Date; checkedInAt?: Date | null } | null,
+): string {
+  if (!appointment || reason === "NOT_FOUND") {
+    return "We could not find that appointment. Please check the code.";
+  }
+
+  const { scheduledFor, checkedInAt } = appointment;
+  const time = formatZonedTime(scheduledFor);
+  const date = formatZonedDate(scheduledFor);
+
+  switch (reason) {
+    case "TOO_EARLY":
+      return `Your appointment is today at ${time}. Check-in opens at ${formatZonedTime(checkInOpensAt(scheduledFor))}.`;
+    case "WRONG_DAY":
+      return `Your appointment is on ${date} at ${time}. Please come back then.`;
+    case "CANCELLED":
+      return `This appointment (${date} at ${time}) was cancelled, so this code no longer works.`;
+    case "EXPIRED":
+      return `This appointment was for ${date} at ${time}, and its check-in window has closed.`;
+    case "ALREADY_USED":
+      return checkedInAt
+        ? `This code was already used to check in on ${formatZonedDate(checkedInAt)} at ${formatZonedTime(checkedInAt)}. Each code works once.`
+        : "This code has already been used to check in. Each code works once.";
+  }
 }
 
 /**
@@ -122,7 +207,7 @@ export async function validateAppointmentToken(
   const trimmed = token.trim();
 
   if (!trimmed) {
-    return { ok: false, reason: "NOT_FOUND" };
+    return notFound();
   }
 
   const appointment = await prisma.appointment.findFirst({
@@ -133,17 +218,28 @@ export async function validateAppointmentToken(
     where: {
       OR: [{ qrToken: trimmed }, { referenceNumber: trimmed.toUpperCase() }],
     },
-    include: { host: true, purpose: true },
+    include: {
+      host: true,
+      purpose: true,
+      visit: { select: { checkInTime: true } },
+    },
   });
 
   if (!appointment) {
-    return { ok: false, reason: "NOT_FOUND" };
+    return notFound();
   }
 
   const failure = classifyAppointment(appointment);
 
   if (failure) {
-    return { ok: false, reason: failure };
+    return {
+      ok: false,
+      reason: failure,
+      message: describeAppointmentFailure(failure, {
+        scheduledFor: appointment.scheduledFor,
+        checkedInAt: appointment.visit?.checkInTime ?? null,
+      }),
+    };
   }
 
   return {
@@ -161,16 +257,13 @@ export async function validateAppointmentToken(
   };
 }
 
-/** Wording for each failure, so every surface turns a reason down the same way. */
-export const APPOINTMENT_FAILURE_MESSAGE: Record<
-  AppointmentTokenFailure,
-  string
-> = {
-  NOT_FOUND: "We could not find that appointment. Please check the code.",
-  ALREADY_USED: "This appointment has already been checked in.",
-  EXPIRED: "This appointment has expired. Please ask reception for help.",
-  CANCELLED: "This appointment was cancelled.",
-};
+function notFound(): AppointmentTokenResult {
+  return {
+    ok: false,
+    reason: "NOT_FOUND",
+    message: describeAppointmentFailure("NOT_FOUND", null),
+  };
+}
 
 /** HTTP status for each failure — 404 for absent, 409 for present but unusable. */
 export const APPOINTMENT_FAILURE_STATUS: Record<
@@ -181,6 +274,8 @@ export const APPOINTMENT_FAILURE_STATUS: Record<
   ALREADY_USED: 409,
   EXPIRED: 409,
   CANCELLED: 409,
+  WRONG_DAY: 409,
+  TOO_EARLY: 409,
 };
 
 const QR_OPTIONS = {

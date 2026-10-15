@@ -1,3 +1,5 @@
+import { logger } from "@/lib/logger";
+import { withApi } from "@/lib/api";
 import { NextResponse } from "next/server";
 
 // TODO(multi-tenancy): reordering renumbers the whole global list. Once
@@ -16,7 +18,7 @@ import { movePurposeOption } from "@/lib/purposes";
  * interleave and leave the list scrambled. This does the whole reordering in one
  * transaction server-side.
  */
-export async function POST(
+async function POSTHandler(
   request: Request,
   context: RouteContext<"/api/purposes/[id]/move">,
 ) {
@@ -60,10 +62,12 @@ export async function POST(
 
     return NextResponse.json({ moved: true });
   } catch (error) {
-    console.error(`POST /api/purposes/${id}/move failed`, error);
+    logger.error(`POST /api/purposes/${id}/move failed`, error);
     return NextResponse.json(
       { error: "Could not reorder that purpose." },
       { status: 500 },
     );
   }
 }
+
+export const POST = withApi(POSTHandler);

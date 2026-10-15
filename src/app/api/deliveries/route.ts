@@ -1,3 +1,5 @@
+import { logger } from "@/lib/logger";
+import { withApi } from "@/lib/api";
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
@@ -21,7 +23,7 @@ const MAX_NOTE = 280;
  * arrive, the host wins and the free text is dropped, so a row never claims two
  * different destinations.
  */
-export async function POST(request: Request) {
+async function POSTHandler(request: Request) {
   const session = await getSession();
 
   if (!session) {
@@ -97,10 +99,12 @@ export async function POST(request: Request) {
 
     return NextResponse.json(created, { status: 201 });
   } catch (error) {
-    console.error("POST /api/deliveries failed", error);
+    logger.error("POST /api/deliveries failed", error);
     return NextResponse.json(
       { error: "Could not log this delivery. Please try again." },
       { status: 500 },
     );
   }
 }
+
+export const POST = withApi(POSTHandler);

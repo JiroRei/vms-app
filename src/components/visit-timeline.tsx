@@ -4,12 +4,16 @@ import { useCallback, useEffect, useState } from "react";
 
 import type { VisitEventType } from "@/generated/prisma/enums";
 import type { VisitTimeline as VisitTimelineData } from "@/lib/visits";
+import { SITE_TIMEZONE } from "@/lib/site-config";
 
 const EVENT_LABEL: Record<VisitEventType, string> = {
   CHECK_IN: "Checked in",
   STEP_OUT: "Stepped out (returning)",
   RETURN: "Returned",
   CHECK_OUT: "Checked out",
+  // Not "Checked out": nobody saw them leave, the cleanup closed the visit at
+  // the configured time. The time column carries that closing time.
+  AUTO_CLOSE: "Auto-closed (departure not recorded)",
 };
 
 /** Dot colors reuse the palette the badges already assign to each state. */
@@ -18,17 +22,21 @@ const EVENT_DOT: Record<VisitEventType, string> = {
   STEP_OUT: "bg-amber-500",
   RETURN: "bg-blue-500",
   CHECK_OUT: "bg-gray-400 dark:bg-gray-500",
+  // Paler than CHECK_OUT: a computed time, not an observed one.
+  AUTO_CLOSE: "bg-gray-300 dark:bg-gray-600",
 };
 
 function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], {
+  return new Date(iso).toLocaleTimeString("en-US", {
+    timeZone: SITE_TIMEZONE,
     hour: "numeric",
     minute: "2-digit",
   });
 }
 
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString([], {
+  return new Date(iso).toLocaleDateString("en-US", {
+    timeZone: SITE_TIMEZONE,
     month: "short",
     day: "numeric",
   });
@@ -36,7 +44,7 @@ function formatDate(iso: string): string {
 
 /** Local calendar day, used to decide whether an event needs its date shown. */
 function dayKey(iso: string): string {
-  return new Date(iso).toLocaleDateString();
+  return new Date(iso).toLocaleDateString("en-US", { timeZone: SITE_TIMEZONE });
 }
 
 /**

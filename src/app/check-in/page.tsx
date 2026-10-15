@@ -1,16 +1,15 @@
 import Link from "next/link";
+import { ORGANIZATION_NAME } from "@/lib/site-config";
 
-/** The three ways in, in the order a visitor is most likely to need them. */
+/** Check-in options, in the order a visitor is most likely to need them. */
 const OPTIONS = [
   {
     href: "/check-in/appointment",
-    icon: "📋",
     label: "I have an appointment",
     hint: "Check in with a pre-registered visit",
   },
   {
     href: "/check-in/walkin",
-    icon: "🚶",
     label: "Walk-in",
     hint: "Register as a new visitor",
   },
@@ -26,6 +25,7 @@ export default function KioskPage() {
           <h1 className="text-3xl font-bold tracking-tight text-gray-900 sm:text-4xl">
             Welcome
           </h1>
+          <p className="mt-2 text-lg font-medium text-gray-700">{ORGANIZATION_NAME}</p>
           <p className="mt-2 text-base text-gray-500">
             How would you like to check in?
           </p>
@@ -40,9 +40,6 @@ export default function KioskPage() {
               // and the back link still fit without scrolling.
               className="flex flex-col items-center justify-center rounded-xl border border-gray-200 bg-white p-6 shadow-sm transition-all hover:border-blue-300 hover:shadow-md sm:p-8"
             >
-              <span className="mb-3 text-4xl" aria-hidden>
-                {option.icon}
-              </span>
               <span className="text-center text-lg font-semibold text-gray-900 sm:text-xl">
                 {option.label}
               </span>

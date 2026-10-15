@@ -35,7 +35,7 @@ export default function LoginPage() {
               name="email"
               type="email"
               required
-              autoComplete="email"
+              autoComplete="off"
               placeholder="you@company.com"
               className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white dark:placeholder:text-gray-500"
             />
@@ -52,7 +52,7 @@ export default function LoginPage() {
               name="password"
               type="password"
               required
-              autoComplete="current-password"
+              autoComplete="off"
               placeholder="••••••••"
               className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white dark:placeholder:text-gray-500"
             />
@@ -75,6 +75,12 @@ export default function LoginPage() {
             {pending ? "Signing in…" : "Sign In"}
           </button>
         </form>
+
+        <div className="text-center">
+          <Link href="/forgot-password" className="text-sm text-blue-700 hover:text-blue-600">
+            Forgot password?
+          </Link>
+        </div>
 
         <div className="text-center">
           <Link href="/" className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">

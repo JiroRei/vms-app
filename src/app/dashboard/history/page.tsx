@@ -3,6 +3,8 @@ import Link from "next/link";
 import { EmptyState } from "@/components/empty-state";
 import {
   getVisitHistory,
+  getHistoryQuery,
+  historyFilterParams,
   getVisitorFrequency,
   PAGE_SIZE,
   type HistoryFilters as Filters,
@@ -11,19 +13,11 @@ import {
 // belongs to whoever hosted it, so a host who has since left has to stay
 // filterable here even though the kiosk no longer offers them.
 import { listHosts } from "@/lib/hosts";
+import { getSession } from "@/lib/session";
 
 import { HistoryFilters } from "./history-filters";
 import { HistoryTable } from "./history-table";
 import { VisitorFrequencyChart } from "./visitor-frequency-chart";
-
-/** Reads `?page=` etc. — a bad value falls back rather than throwing. */
-function readParam(
-  params: Record<string, string | string[] | undefined>,
-  key: string,
-): string {
-  const value = params[key];
-  return typeof value === "string" ? value : "";
-}
 
 /** Whether the visitor is looking at a filtered view or the whole log. */
 function hasActiveFilters(filters: Filters): boolean {
@@ -32,7 +26,7 @@ function hasActiveFilters(filters: Filters): boolean {
       filters.hostId ||
       filters.from ||
       filters.to ||
-      filters.hideDeliveries,
+      filters.hideDeliveries || filters.type,
   );
 }
 
@@ -45,31 +39,20 @@ export default async function HistoryPage({
   // to /login before this renders.
   const params = await searchParams;
 
-  const filters: Filters = {
-    search: readParam(params, "search"),
-    hostId: readParam(params, "hostId"),
-    from: readParam(params, "from"),
-    to: readParam(params, "to"),
-    hideDeliveries: readParam(params, "hideDeliveries") === "1",
-    page: Number.parseInt(readParam(params, "page"), 10) || 1,
-  };
+  const query = getHistoryQuery(params);
+  const { filters } = query;
 
-  const [history, hosts, frequency] = await Promise.all([
-    getVisitHistory(filters),
+  const [history, hosts, frequency, session] = await Promise.all([
+    getVisitHistory(query),
     listHosts(),
     // Always 30 days; the chart's week view slices client-side.
     getVisitorFrequency(30),
+    getSession(),
   ]);
 
   /** Builds a page link that preserves the active filters. */
   function pageHref(page: number): string {
-    const query = new URLSearchParams();
-
-    if (filters.search) query.set("search", filters.search);
-    if (filters.hostId) query.set("hostId", filters.hostId);
-    if (filters.from) query.set("from", filters.from);
-    if (filters.to) query.set("to", filters.to);
-    if (filters.hideDeliveries) query.set("hideDeliveries", "1");
+    const query = historyFilterParams(filters);
     if (page > 1) query.set("page", String(page));
 
     const qs = query.toString();
@@ -89,13 +72,23 @@ export default async function HistoryPage({
         <p className="text-sm text-gray-500 dark:text-gray-400">
           Past visitor records
         </p>
+        <div className="mt-3 flex flex-wrap gap-3">
+          <Link href="/dashboard/register" className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800">
+            Print today’s register
+          </Link>
+          {session?.role === "ADMIN" && (
+            <a href={`/api/visits/export?${historyFilterParams(filters)}`} className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-teal-800">
+              Export CSV
+            </a>
+          )}
+        </div>
       </div>
 
       <VisitorFrequencyChart data={frequency} />
 
       <HistoryFilters
         // Remounts with fresh state whenever the active filters change.
-        key={`${filters.search}|${filters.hostId}|${filters.from}|${filters.to}|${filters.hideDeliveries}`}
+        key={`${filters.search}|${filters.hostId}|${filters.from}|${filters.to}|${filters.type}|${filters.hideDeliveries}`}
         hosts={hosts}
         initial={{
           search: filters.search,
@@ -103,6 +96,7 @@ export default async function HistoryPage({
           from: filters.from,
           to: filters.to,
           hideDeliveries: filters.hideDeliveries,
+          type: filters.type,
         }}
       />
 
@@ -115,11 +109,10 @@ export default async function HistoryPage({
 
         {history.visits.length === 0 ? (
           <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
-            // An empty log and an over-narrow filter look identical in a blank
-            // table but need different next steps, so they are worded apart.
-            filtered ? (
+            {/* An empty log and an over-narrow filter look identical in a blank
+               table but need different next steps, so they are worded apart. */}
+            {filtered ? (
               <EmptyState
-                icon="🔍"
                 title="No visits match these filters"
                 hint="Try widening the date range, or clearing the host and name filters."
                 action={
@@ -131,6 +124,12 @@ export default async function HistoryPage({
                   </Link>
                 }
               />
+            ) : (
+              <EmptyState
+                title="No visit history yet"
+                hint="Completed visits are logged here once visitors start checking in."
+              />
+            )}
             </div>
         ) : (
           <HistoryTable visits={history.visits} />

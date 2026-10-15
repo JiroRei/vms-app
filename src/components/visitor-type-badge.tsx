@@ -15,7 +15,6 @@ export function VisitorTypeBadge({ type }: { type: VisitorType }) {
 
   return (
     <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 align-middle text-xs font-medium text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
-      <span aria-hidden>📦</span>
       Delivery
     </span>
   );

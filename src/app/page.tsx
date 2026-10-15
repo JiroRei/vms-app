@@ -1,11 +1,12 @@
 import Link from "next/link";
+import { ORGANIZATION_NAME } from "@/lib/site-config";
 
 export default function Home() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-gray-50 px-4 dark:bg-gray-900">
       <div className="text-center space-y-8">
         <h1 className="text-4xl font-bold tracking-tight text-gray-900 dark:text-white">
-          Visitor Management System
+          {ORGANIZATION_NAME}
         </h1>
         <p className="mx-auto max-w-md text-lg text-gray-500 dark:text-gray-400">
           Streamline your visitor check-in process

@@ -1,3 +1,5 @@
+import { logger } from "@/lib/logger";
+import { withApi } from "@/lib/api";
 import { NextResponse } from "next/server";
 
 import { Role } from "@/generated/prisma/enums";
@@ -11,7 +13,7 @@ import { createStaff, MIN_PASSWORD_LENGTH } from "@/lib/staff";
  * only door. Public sign-up stays switched off: this is an administrator
  * issuing a credential, not a stranger claiming one.
  */
-export async function POST(request: Request) {
+async function POSTHandler(request: Request) {
   const session = await getSession();
 
   if (!session) {
@@ -83,10 +85,12 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ staff: result.staff }, { status: 201 });
   } catch (error) {
-    console.error("POST /api/staff failed", error);
+    logger.error("POST /api/staff failed", error);
     return NextResponse.json(
       { error: "Could not create this account." },
       { status: 500 },
     );
   }
 }
+
+export const POST = withApi(POSTHandler);

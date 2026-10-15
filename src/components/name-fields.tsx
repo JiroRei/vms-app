@@ -29,9 +29,9 @@ const DEFAULT_CLASSES: NameFieldsClasses = {
   error: "mt-1 text-sm text-red-600",
 };
 
-const FIELDS: { field: NameField; label: string; autoComplete: string }[] = [
-  { field: "firstName", label: "First name", autoComplete: "given-name" },
-  { field: "lastName", label: "Last name", autoComplete: "family-name" },
+const FIELDS: { field: NameField; label: string }[] = [
+  { field: "firstName", label: "First name" },
+  { field: "lastName", label: "Last name" },
 ];
 
 export function NameFields({
@@ -56,7 +56,7 @@ export function NameFields({
 
   return (
     <div className="grid gap-4 sm:grid-cols-2">
-      {FIELDS.map(({ field, label, autoComplete }) => {
+      {FIELDS.map(({ field, label }) => {
         const id = `${idPrefix}${field}`;
         const error = errors[field];
 
@@ -69,7 +69,7 @@ export function NameFields({
               id={id}
               name={field}
               type="text"
-              autoComplete={autoComplete}
+              autoComplete="off"
               autoCapitalize="words"
               required
               maxLength={MAX_NAME_PART}

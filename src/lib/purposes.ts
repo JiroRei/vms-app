@@ -64,7 +64,7 @@ export async function getPurposeOptions(): Promise<PurposeOptionRecord[]> {
   });
 }
 
-/** `label` is unique, so a duplicate is a user error rather than a fault. */
+/** Labels are unique without regard to case or surrounding spaces. */
 export type PurposeWriteResult =
   | { ok: true; option: PurposeOptionRecord }
   | { ok: false; reason: "duplicate-label" | "not-found" };
@@ -129,20 +129,40 @@ export async function updatePurposeOption(
   changes: { label?: string; isActive?: boolean },
 ): Promise<PurposeWriteResult> {
   try {
-    const option = await prisma.purposeOption.update({
-      where: { id },
-      data: changes,
-      select: { id: true, label: true, isActive: true, sortOrder: true },
+    const option = await prisma.$transaction(async (tx) => {
+      if (changes.label !== undefined) {
+        const duplicate = await tx.purposeOption.findFirst({
+          where: {
+            id: { not: id },
+            label: { equals: changes.label.trim(), mode: "insensitive" },
+          },
+          select: { id: true },
+        });
+        if (duplicate) throw new DuplicatePurposeLabelError();
+      }
+      return tx.purposeOption.update({
+        where: { id },
+        data: {
+          ...changes,
+          ...(changes.label !== undefined ? { label: changes.label.trim() } : {}),
+        },
+        select: { id: true, label: true, isActive: true, sortOrder: true },
+      });
     });
 
     return { ok: true, option };
   } catch (cause) {
+    if (cause instanceof DuplicatePurposeLabelError) {
+      return { ok: false, reason: "duplicate-label" };
+    }
     if (isUniqueViolation(cause)) return { ok: false, reason: "duplicate-label" };
     if (isMissingRow(cause)) return { ok: false, reason: "not-found" };
 
     throw cause;
   }
 }
+
+class DuplicatePurposeLabelError extends Error {}
 
 export type PurposeMoveResult = "moved" | "at-edge" | "not-found";
 
@@ -209,8 +229,8 @@ export async function findSelectablePurpose(
 
 /** The option deliveries are filed under, or null if nobody kept one. */
 export async function findDeliveryPurposeId(): Promise<string | null> {
-  const option = await prisma.purposeOption.findUnique({
-    where: { label: DELIVERY_PURPOSE_LABEL },
+  const option = await prisma.purposeOption.findFirst({
+    where: { label: { equals: DELIVERY_PURPOSE_LABEL, mode: "insensitive" } },
     select: { id: true },
   });
 

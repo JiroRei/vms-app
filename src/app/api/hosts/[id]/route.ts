@@ -1,3 +1,5 @@
+import { logger } from "@/lib/logger";
+import { withApi } from "@/lib/api";
 import { NextResponse } from "next/server";
 
 import { updateHost } from "@/lib/hosts";
@@ -13,7 +15,7 @@ import { getSession } from "@/lib/session";
  * out of the history with it. `active: false` removes them from the kiosk and
  * keeps the record.
  */
-export async function PATCH(
+async function PATCHHandler(
   request: Request,
   context: RouteContext<"/api/hosts/[id]">,
 ) {
@@ -40,10 +42,10 @@ export async function PATCH(
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const { name, department, active } = (body ?? {}) as Record<string, unknown>;
+  const { name, department, email, active } = (body ?? {}) as Record<string, unknown>;
 
   const fieldErrors: Record<string, string> = {};
-  const patch: { name?: string; department?: string; active?: boolean } = {};
+  const patch: { name?: string; department?: string; email?: string | null; active?: boolean } = {};
 
   // Each field is optional, but a field that *is* sent has to be usable —
   // sending an empty name must not blank out the directory entry.
@@ -62,6 +64,19 @@ export async function PATCH(
       fieldErrors.department = "Please enter their department.";
     } else {
       patch.department = trimmed;
+    }
+  }
+
+  if (email !== undefined) {
+    if (typeof email !== "string") {
+      fieldErrors.email = "Enter a valid host email address or leave it blank.";
+    } else {
+      const trimmed = email.trim();
+      if (trimmed && !/^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/.test(trimmed)) {
+        fieldErrors.email = "Enter a valid host email address or leave it blank.";
+      } else {
+        patch.email = trimmed.toLowerCase() || null;
+      }
     }
   }
 
@@ -95,10 +110,12 @@ export async function PATCH(
 
     return NextResponse.json({ host: result.host });
   } catch (error) {
-    console.error(`PATCH /api/hosts/${id} failed`, error);
+    logger.error(`PATCH /api/hosts/${id} failed`, error);
     return NextResponse.json(
       { error: "Could not update this host." },
       { status: 500 },
     );
   }
 }
+
+export const PATCH = withApi(PATCHHandler);

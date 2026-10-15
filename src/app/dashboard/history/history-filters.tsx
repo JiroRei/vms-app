@@ -14,6 +14,7 @@ export type FilterValues = {
   from: string;
   to: string;
   hideDeliveries: boolean;
+  type: "" | "GUEST" | "DELIVERY";
 };
 
 /**
@@ -40,7 +41,7 @@ export function HistoryFilters({
   const [hostId, setHostId] = useState(initial.hostId);
   const [from, setFrom] = useState(initial.from);
   const [to, setTo] = useState(initial.to);
-  const [hideDeliveries, setHideDeliveries] = useState(initial.hideDeliveries);
+  const [type, setType] = useState(initial.type || (initial.hideDeliveries ? "GUEST" : ""));
 
   function navigate(href: string) {
     startTransition(() => router.push(href));
@@ -55,7 +56,7 @@ export function HistoryFilters({
     if (hostId) params.set("hostId", hostId);
     if (from) params.set("from", from);
     if (to) params.set("to", to);
-    if (hideDeliveries) params.set("hideDeliveries", "1");
+    if (type) params.set("type", type);
     // Any filter change invalidates the current page number.
 
     const query = params.toString();
@@ -67,11 +68,11 @@ export function HistoryFilters({
     setHostId("");
     setFrom("");
     setTo("");
-    setHideDeliveries(false);
+    setType("");
     navigate("/dashboard/history");
   }
 
-  const hasFilters = Boolean(search || hostId || from || to || hideDeliveries);
+  const hasFilters = Boolean(search || hostId || from || to || type);
 
   return (
     <form
@@ -86,6 +87,7 @@ export function HistoryFilters({
           Visitor name
         </label>
         <input
+          autoComplete="off"
           id="search"
           name="search"
           type="text"
@@ -104,6 +106,7 @@ export function HistoryFilters({
           Host
         </label>
         <select
+          autoComplete="off"
           id="hostId"
           name="hostId"
           value={hostId}
@@ -127,6 +130,7 @@ export function HistoryFilters({
           From
         </label>
         <input
+          autoComplete="off"
           id="from"
           name="from"
           type="date"
@@ -145,6 +149,7 @@ export function HistoryFilters({
           To
         </label>
         <input
+          autoComplete="off"
           id="to"
           name="to"
           type="date"
@@ -158,14 +163,13 @@ export function HistoryFilters({
       {/* `flex-wrap` and `sm:col-span-2`: on a phone this row holds a checkbox
           and two buttons that otherwise squeeze into unreadable slivers. */}
       <div className="flex flex-wrap items-end gap-3 sm:col-span-2 lg:col-span-1">
-        <label className="flex cursor-pointer items-center gap-2 pb-2 text-xs font-medium text-gray-600 dark:text-gray-300">
-          <input
-            type="checkbox"
-            checked={hideDeliveries}
-            onChange={(event) => setHideDeliveries(event.target.checked)}
-            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-gray-600"
-          />
-          Hide deliveries
+        <label className="flex flex-col gap-1 text-xs font-medium text-gray-600 dark:text-gray-300">
+          Type
+          <select name="type" value={type} onChange={(event) => setType(event.target.value as FilterValues["type"])} className={controlClass}>
+            <option value="">All types</option>
+            <option value="GUEST">Guest</option>
+            <option value="DELIVERY">Delivery</option>
+          </select>
         </label>
 
         <button

@@ -1,4 +1,6 @@
 "use client";
+import { apiErrorMessage } from "@/lib/api-error-message";
+
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -82,7 +84,7 @@ export function StaffDirectory({
         if (data?.fieldErrors) {
           setFieldErrors(data.fieldErrors as FieldErrors);
         } else {
-          setFormError(data?.error ?? "Could not create this account.");
+          setFormError(apiErrorMessage(data?.error) ?? "Could not create this account.");
         }
 
         return;
@@ -116,7 +118,7 @@ export function StaffDirectory({
 
       if (!response.ok) {
         const data = await response.json().catch(() => null);
-        setRowError(data?.error ?? "Could not change that role.");
+        setRowError(apiErrorMessage(data?.error) ?? "Could not change that role.");
         return;
       }
 
@@ -137,7 +139,7 @@ export function StaffDirectory({
 
       if (!response.ok) {
         const data = await response.json().catch(() => null);
-        setRowError(data?.error ?? "Could not remove that account.");
+        setRowError(apiErrorMessage(data?.error) ?? "Could not remove that account.");
         return;
       }
 
@@ -218,6 +220,7 @@ export function StaffDirectory({
                 Role
               </label>
               <select
+                autoComplete="off"
                 id="staff-role"
                 value={role}
                 onChange={(event) =>

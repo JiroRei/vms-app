@@ -1,10 +1,12 @@
+import { logger } from "@/lib/logger";
+import { withApi } from "@/lib/api";
 import { NextResponse } from "next/server";
 
 import { getSession } from "@/lib/session";
 import { checkOutVisit } from "@/lib/visits";
 
 /** POST /api/visits/[id]/checkout — stamp `checkOutTime` on an active visit. */
-export async function POST(
+async function POSTHandler(
   _request: Request,
   context: RouteContext<"/api/visits/[id]/checkout">,
 ) {
@@ -39,10 +41,12 @@ export async function POST(
 
     return NextResponse.json({ id, checkOutTime });
   } catch (error) {
-    console.error(`POST /api/visits/${id}/checkout failed`, error);
+    logger.error(`POST /api/visits/${id}/checkout failed`, error);
     return NextResponse.json(
       { error: "Failed to check out this visit." },
       { status: 500 },
     );
   }
 }
+
+export const POST = withApi(POSTHandler);

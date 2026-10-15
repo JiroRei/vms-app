@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
+import { ORGANIZATION_NAME } from "@/lib/site-config";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -14,7 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Visitor Management System",
+  title: ORGANIZATION_NAME,
   description: "Manage visitors, appointments, and check-ins",
 };
 

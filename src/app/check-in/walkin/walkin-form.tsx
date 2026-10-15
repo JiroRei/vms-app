@@ -1,4 +1,6 @@
 "use client";
+import { apiErrorMessage } from "@/lib/api-error-message";
+
 
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
@@ -128,7 +130,7 @@ export function WalkinForm({
           focusFirstError(serverErrors);
         } else {
           setFormError(
-            data?.error ?? "Could not complete check-in. Please try again.",
+            apiErrorMessage(data?.error) ?? "Could not complete check-in. Please try again.",
           );
         }
 
@@ -149,9 +151,6 @@ export function WalkinForm({
     return (
       <div className="space-y-6 text-center">
         <div className="space-y-3">
-          <span className="text-5xl" role="img" aria-label="Checked in">
-            ✅
-          </span>
           <h1 className="text-2xl font-bold tracking-tight text-gray-900 sm:text-3xl">
             You&apos;re checked in!
           </h1>
@@ -216,6 +215,7 @@ export function WalkinForm({
             Purpose of Visit
           </label>
           <select
+            autoComplete="off"
             id="purposeId"
             name="purposeId"
             value={purposeId}
@@ -252,6 +252,7 @@ export function WalkinForm({
             Host / Department
           </label>
           <select
+            autoComplete="off"
             id="hostId"
             name="hostId"
             value={hostId}

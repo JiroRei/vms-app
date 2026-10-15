@@ -15,8 +15,10 @@ import "server-only";
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { nextCookies } from "better-auth/next-js";
+import { after } from "next/server";
 
 import { prisma } from "@/lib/prisma";
+import { sendPasswordResetEmail } from "@/lib/email";
 
 /** 8 hours — a shift, matching the session lifetime the dev login used. */
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 8;
@@ -39,6 +41,10 @@ export const auth = betterAuth({
     // so leaving it open would let anyone self-issue a GUARD account with
     // dashboard access. Accounts are created by `prisma/seed.ts` instead.
     disableSignUp: true,
+    revokeSessionsOnPasswordReset: true,
+    sendResetPassword: async ({ user, url }) => {
+      after(() => sendPasswordResetEmail({ email: user.email, name: user.name, url }));
+    },
   },
 
   user: {

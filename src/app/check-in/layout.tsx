@@ -1,8 +1,9 @@
 import { KioskIdleReset } from "./kiosk-idle-reset";
+import { KioskHeartbeat } from "./kiosk-heartbeat";
 
 /**
- * Wraps every kiosk screen. Its only job is to mount the idle watchdog once for
- * the whole section instead of once per form.
+ * Keeps kiosk screens readable regardless of the saved staff theme and mounts
+ * the idle watchdog and heartbeat once for the whole section.
  */
 export default function KioskLayout({
   children,
@@ -10,9 +11,10 @@ export default function KioskLayout({
   children: React.ReactNode;
 }) {
   return (
-    <>
+    <div className="visitor-shell">
       {children}
       <KioskIdleReset />
-    </>
+      <KioskHeartbeat />
+    </div>
   );
 }

@@ -1,4 +1,6 @@
 "use client";
+import { apiErrorMessage } from "@/lib/api-error-message";
+
 
 import { useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
@@ -10,6 +12,7 @@ import { TimelineChevron, VisitTimeline } from "@/components/visit-timeline";
 import { VisitorTypeBadge } from "@/components/visitor-type-badge";
 import { formatFullName } from "@/lib/names";
 import type { ActiveVisit } from "@/lib/visits";
+import { SITE_TIMEZONE } from "@/lib/site-config";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -33,7 +36,8 @@ const ACTION_DONE: Record<VisitAction, (name: string) => string> = {
 };
 
 function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], {
+  return new Date(iso).toLocaleTimeString("en-US", {
+    timeZone: SITE_TIMEZONE,
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -216,7 +220,7 @@ export function LiveCheckIns({
         showToast("Someone already updated this visit.", "error");
       } else {
         const data = await response.json().catch(() => null);
-        showToast(data?.error ?? ACTION_ERROR[action], "error");
+        showToast(apiErrorMessage(data?.error) ?? ACTION_ERROR[action], "error");
       }
     } catch {
       showToast(
@@ -269,7 +273,7 @@ export function LiveCheckIns({
   const returning = visits.length - onSite;
 
   return (
-    <div className="space-y-3">
+    <div id="live-check-ins" className="scroll-mt-24 space-y-3">
       <div className="flex items-center justify-between gap-4">
         <p className="text-sm text-gray-500 dark:text-gray-400">
           <span className="font-semibold text-gray-900 dark:text-white">
@@ -344,7 +348,6 @@ export function LiveCheckIns({
               <tr>
                 <td colSpan={5}>
                   <EmptyState
-                    icon="🪑"
                     title="Nobody is checked in right now"
                     hint="Visitors appear here the moment they check in at the kiosk."
                   />
@@ -367,6 +370,7 @@ export function LiveCheckIns({
                   <Fragment key={visit.id}>
                   <tr
                     onClick={(event) => onRowClick(event, visit.id)}
+                    data-returning-row={isReturning ? "true" : undefined}
                     className={`cursor-pointer transition-colors duration-500 ${
                       flashed
                         ? "bg-green-50 dark:bg-green-500/10"

@@ -1,12 +1,21 @@
-import { NextResponse } from "next/server";
+import { logger } from "@/lib/logger";
+import { withApi } from "@/lib/api";
+import { after, NextResponse } from "next/server";
 
+import {
+  belongsToClaim,
+  getAppointmentByReference,
+  redeemAppointment,
+} from "@/lib/appointments";
+import { APPOINTMENT_FAILURE_STATUS, describeAppointmentFailure } from "@/lib/qr";
 import { clientIp, consumeRateLimit } from "@/lib/rate-limit";
 import { getSession } from "@/lib/session";
-import { redeemAppointment } from "@/lib/appointments";
+import { notifyHostArrival } from "@/lib/host-notify";
 import {
-  APPOINTMENT_FAILURE_MESSAGE,
-  APPOINTMENT_FAILURE_STATUS,
-} from "@/lib/qr";
+  evaluateRecurringVisitor,
+  recordPassUse,
+  validatePass,
+} from "@/lib/visitor-pass";
 
 /**
  * Same budget the kiosk redeem endpoint had on clark_dev.
@@ -26,7 +35,7 @@ const REDEEM_LIMIT = { window: 60, max: 20 };
  * kiosk page does not silently sign for a visitor's self-service check-in.
  * Claiming `false` while signed in only ever records less, never more.
  */
-export async function POST(request: Request) {
+async function POSTHandler(request: Request) {
   const limit = consumeRateLimit(
     `appointment-redeem:${clientIp(request.headers)}`,
     REDEEM_LIMIT,
@@ -50,7 +59,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const { token, assisted } = (body ?? {}) as Record<string, unknown>;
+  const { token, assisted, passToken } = (body ?? {}) as Record<string, unknown>;
   const candidate = typeof token === "string" ? token : "";
 
   if (!candidate.trim()) {
@@ -73,17 +82,67 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await redeemAppointment(candidate, { checkedInBy });
+    // Express check-in: the pass found this appointment. Re-validate the pass
+    // and confirm the appointment really is its holder's — the reference alone
+    // must not let one pass redeem someone else's booking as a PASS check-in.
+    let viaPass: { profileId: string; passId: string } | null = null;
+
+    if (typeof passToken === "string" && passToken) {
+      const pass = await validatePass(passToken);
+
+      if (!pass.ok) {
+        return NextResponse.json(
+          { reason: "PASS_INVALID", error: pass.message },
+          { status: 403 },
+        );
+      }
+
+      const appointment = await getAppointmentByReference(candidate);
+      const { profile } = pass.pass;
+
+      if (
+        !appointment ||
+        !belongsToClaim(appointment, {
+          profileId: profile.id,
+          email: profile.email,
+          nameKey: profile.nameKey,
+        })
+      ) {
+        return NextResponse.json(
+          { reason: "NOT_FOUND", error: describeAppointmentFailure("NOT_FOUND", null) },
+          { status: 404 },
+        );
+      }
+
+      viaPass = { profileId: profile.id, passId: pass.pass.id };
+    }
+
+    const result = await redeemAppointment(candidate, { checkedInBy, viaPass });
 
     if (result.status === "failed") {
       return NextResponse.json(
         {
           reason: result.reason,
-          error: APPOINTMENT_FAILURE_MESSAGE[result.reason],
+          error: result.message,
         },
         { status: APPOINTMENT_FAILURE_STATUS[result.reason] },
       );
     }
+
+    if (viaPass) {
+      await recordPassUse(viaPass.passId);
+    }
+
+    // Every check-in linked to a profile may tip it over the recurring
+    // threshold. After the response, so a slow email never holds up the kiosk.
+    after(() => evaluateRecurringVisitor(result.visitorProfileId));
+    after(() => notifyHostArrival({
+      hostId: result.hostId,
+      firstName: result.appointment.firstName,
+      lastName: result.appointment.lastName,
+      purposeLabel: result.appointment.purposeLabel,
+      checkedInAt: result.checkInTime,
+    }));
 
     return NextResponse.json(
       {
@@ -94,10 +153,12 @@ export async function POST(request: Request) {
       { status: 201 },
     );
   } catch (error) {
-    console.error("POST /api/appointments/check-in failed", error);
+    logger.error("POST /api/appointments/check-in failed", error);
     return NextResponse.json(
       { error: "Could not complete check-in. Please ask reception for help." },
       { status: 500 },
     );
   }
 }
+
+export const POST = withApi(POSTHandler);

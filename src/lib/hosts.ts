@@ -19,6 +19,7 @@ export type HostRecord = {
   id: string;
   name: string;
   department: string;
+  email: string | null;
   active: boolean;
   /** How much history is attached, so the UI can say what deactivating keeps. */
   visitorCount: number;
@@ -29,6 +30,7 @@ export type HostRecord = {
 export type HostInput = {
   name: string;
   department: string;
+  email: string | null;
 };
 
 export type CreateHostResult = { status: "created"; host: HostRecord };
@@ -51,7 +53,7 @@ export async function listHosts(): Promise<HostRecord[]> {
       _count: {
         select: {
           visitors: true,
-          appointments: { where: { used: false } },
+          appointments: { where: { status: "PENDING" } },
         },
       },
     },
@@ -61,6 +63,7 @@ export async function listHosts(): Promise<HostRecord[]> {
     id: host.id,
     name: host.name,
     department: host.department,
+    email: host.email,
     active: host.active,
     visitorCount: host._count.visitors,
     openAppointments: host._count.appointments,
@@ -69,7 +72,7 @@ export async function listHosts(): Promise<HostRecord[]> {
 
 export async function createHost(input: HostInput): Promise<CreateHostResult> {
   const host = await prisma.host.create({
-    data: { name: input.name, department: input.department },
+    data: { name: input.name, department: input.department, email: input.email },
   });
 
   return {
@@ -78,6 +81,7 @@ export async function createHost(input: HostInput): Promise<CreateHostResult> {
       id: host.id,
       name: host.name,
       department: host.department,
+      email: host.email,
       active: host.active,
       visitorCount: 0,
       openAppointments: 0,
@@ -114,6 +118,7 @@ export async function updateHost(
       ...(input.department !== undefined
         ? { department: input.department }
         : {}),
+      ...(input.email !== undefined ? { email: input.email } : {}),
       ...(input.active !== undefined ? { active: input.active } : {}),
     },
   });
@@ -124,7 +129,7 @@ export async function updateHost(
       _count: {
         select: {
           visitors: true,
-          appointments: { where: { used: false } },
+          appointments: { where: { status: "PENDING" } },
         },
       },
     },
@@ -136,6 +141,7 @@ export async function updateHost(
       id: host.id,
       name: host.name,
       department: host.department,
+      email: host.email,
       active: host.active,
       visitorCount: host._count.visitors,
       openAppointments: host._count.appointments,

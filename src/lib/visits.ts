@@ -8,6 +8,7 @@ import type {
 } from "@/generated/prisma/enums";
 import { prisma } from "@/lib/prisma";
 import { findDeliveryPurposeId } from "@/lib/purposes";
+import { sweepStaleVisitsIfDue } from "@/lib/stale-visits";
 
 /**
  * Shape sent to the client. Dates are ISO strings because this crosses the
@@ -65,8 +66,13 @@ export async function getHosts(): Promise<HostOption[]> {
  *
  * Deliveries never appear here: `createDeliveryLog()` writes them as
  * CHECKED_OUT, so the same status filter excludes them without a type test.
+ *
+ * Stale visits are closed first (throttled), so a visitor from a day that is
+ * over never shows as on site, whether or not a scheduler is running.
  */
 export async function getActiveVisits(): Promise<ActiveVisit[]> {
+  await sweepStaleVisitsIfDue();
+
   const visits = await prisma.visit.findMany({
     where: { status: { in: ["ACTIVE", "PENDING_RETURN"] } },
     orderBy: { checkInTime: "desc" },
@@ -104,6 +110,14 @@ export async function createWalkInVisit(input: {
   /** A `PurposeOption` id the caller has already confirmed is selectable. */
   purposeId: string;
   hostId: string;
+  /**
+   * Set for an express walk-in from a visitor pass: the profile the pass
+   * belongs to (so the visit counts toward recurring status), the method, and
+   * the guard if one scanned it. A kiosk walk-in leaves all three unset.
+   */
+  visitorProfileId?: string | null;
+  checkInMethod?: "WALK_IN" | "PASS";
+  checkedInBy?: string | null;
 }) {
   const checkInTime = new Date();
 
@@ -116,6 +130,9 @@ export async function createWalkInVisit(input: {
       visits: {
         create: {
           checkInTime,
+          checkInMethod: input.checkInMethod ?? "WALK_IN",
+          visitorProfileId: input.visitorProfileId ?? null,
+          checkedInBy: input.checkedInBy ?? null,
           events: { create: { eventType: "CHECK_IN", timestamp: checkInTime } },
         },
       },
@@ -179,6 +196,8 @@ export async function createDeliveryLog(input: {
           checkInTime: loggedAt,
           checkOutTime: loggedAt,
           status: "CHECKED_OUT",
+          checkInMethod: "DELIVERY",
+          checkedInBy: input.loggedBy.id,
           checkedOutById: input.loggedBy.id,
           checkedOutByName: input.loggedBy.name,
           events: {
@@ -219,6 +238,8 @@ const EVENT_ORDER: Record<VisitEventType, number> = {
   STEP_OUT: 1,
   RETURN: 2,
   CHECK_OUT: 3,
+  // After STEP_OUT: a stepped-out visit auto-closes at its own exitTime.
+  AUTO_CLOSE: 4,
 };
 
 /** A visit's timeline, plus the context the panel shows above it. */
@@ -309,7 +330,7 @@ async function readStatus(visitId: string): Promise<VisitStatus | null> {
 async function applyVisitTransition(args: {
   visitId: string;
   where: Prisma.VisitWhereInput;
-  data: Prisma.VisitUpdateManyMutationInput;
+  data: Prisma.VisitUncheckedUpdateManyInput;
   eventType: VisitEventType;
   timestamp: Date;
 }): Promise<number> {

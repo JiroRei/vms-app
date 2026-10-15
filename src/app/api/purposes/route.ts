@@ -1,3 +1,5 @@
+import { logger } from "@/lib/logger";
+import { withApi } from "@/lib/api";
 import { NextResponse } from "next/server";
 
 // TODO(multi-tenancy): this route creates options in one global list shared by
@@ -17,7 +19,7 @@ const MAX_LABEL = 80;
  * Admin-only. The settings page hides itself from a guard, but that is not the
  * control: this check is.
  */
-export async function POST(request: Request) {
+async function POSTHandler(request: Request) {
   const denied = await requireAdmin();
   if (denied) return denied;
 
@@ -62,10 +64,12 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ option: result.option }, { status: 201 });
   } catch (error) {
-    console.error("POST /api/purposes failed", error);
+    logger.error("POST /api/purposes failed", error);
     return NextResponse.json(
       { error: "Could not add that purpose." },
       { status: 500 },
     );
   }
 }
+
+export const POST = withApi(POSTHandler);

@@ -1,3 +1,5 @@
+import { logger } from "@/lib/logger";
+import { withApi } from "@/lib/api";
 import { NextResponse } from "next/server";
 
 import { getSession } from "@/lib/session";
@@ -10,7 +12,7 @@ import { markVisitReturning } from "@/lib/visits";
  * PENDING_RETURN, leaving `checkOutTime` null so the visit stays open and can
  * be resumed through `/return`.
  */
-export async function POST(
+async function POSTHandler(
   _request: Request,
   context: RouteContext<"/api/visits/[id]/step-out">,
 ) {
@@ -48,10 +50,12 @@ export async function POST(
 
     return NextResponse.json({ id, exitTime });
   } catch (error) {
-    console.error(`POST /api/visits/${id}/step-out failed`, error);
+    logger.error(`POST /api/visits/${id}/step-out failed`, error);
     return NextResponse.json(
       { error: "Failed to mark this visitor as returning." },
       { status: 500 },
     );
   }
 }
+
+export const POST = withApi(POSTHandler);

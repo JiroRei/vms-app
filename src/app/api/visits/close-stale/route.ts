@@ -1,3 +1,5 @@
+import { logger } from "@/lib/logger";
+import { withApi } from "@/lib/api";
 import { NextResponse } from "next/server";
 
 import { getSession } from "@/lib/session";
@@ -9,7 +11,7 @@ import { closeStaleVisits, countStaleVisits } from "@/lib/stale-visits";
  * Lets the dashboard put a real number in the confirmation dialog rather than
  * asking the user to approve an unknown quantity.
  */
-export async function GET() {
+async function GETHandler() {
   const session = await getSession();
 
   if (!session) {
@@ -19,7 +21,7 @@ export async function GET() {
   try {
     return NextResponse.json({ staleCount: await countStaleVisits() });
   } catch (error) {
-    console.error("GET /api/visits/close-stale failed", error);
+    logger.error("GET /api/visits/close-stale failed", error);
     return NextResponse.json(
       { error: "Failed to count stale visits." },
       { status: 500 },
@@ -36,7 +38,7 @@ export async function GET() {
  * The work itself lives in `closeStaleVisits()`, which takes no request context
  * — a scheduled job can call it directly without going through this route.
  */
-export async function POST() {
+async function POSTHandler() {
   const session = await getSession();
 
   if (!session) {
@@ -54,10 +56,13 @@ export async function POST() {
     const { closed } = await closeStaleVisits();
     return NextResponse.json({ closed });
   } catch (error) {
-    console.error("POST /api/visits/close-stale failed", error);
+    logger.error("POST /api/visits/close-stale failed", error);
     return NextResponse.json(
       { error: "Failed to close stale visits." },
       { status: 500 },
     );
   }
 }
+
+export const GET = withApi(GETHandler);
+export const POST = withApi(POSTHandler);

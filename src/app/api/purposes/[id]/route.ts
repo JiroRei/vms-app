@@ -1,3 +1,5 @@
+import { logger } from "@/lib/logger";
+import { withApi } from "@/lib/api";
 import { NextResponse } from "next/server";
 
 // TODO(multi-tenancy): this route can edit any option in the global list. Once
@@ -17,7 +19,7 @@ const MAX_LABEL = 80;
  * rows, so retiring via `isActive` is the only removal there is. The RESTRICT
  * foreign key stops anyone improvising one.
  */
-export async function PATCH(
+async function PATCHHandler(
   request: Request,
   context: RouteContext<"/api/purposes/[id]">,
 ) {
@@ -95,10 +97,12 @@ export async function PATCH(
 
     return NextResponse.json({ option: result.option });
   } catch (error) {
-    console.error(`PATCH /api/purposes/${id} failed`, error);
+    logger.error(`PATCH /api/purposes/${id} failed`, error);
     return NextResponse.json(
       { error: "Could not update that purpose." },
       { status: 500 },
     );
   }
 }
+
+export const PATCH = withApi(PATCHHandler);

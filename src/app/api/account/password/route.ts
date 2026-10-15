@@ -1,3 +1,5 @@
+import { logger } from "@/lib/logger";
+import { withApi } from "@/lib/api";
 import { APIError } from "better-auth/api";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
@@ -23,7 +25,7 @@ const CHANGE_PASSWORD_LIMIT = { window: 60, max: 5 };
  * else. Other sessions are revoked, because a password change is usually a
  * response to suspecting one is not yours any more.
  */
-export async function POST(request: Request) {
+async function POSTHandler(request: Request) {
   const session = await getSession();
 
   if (!session) {
@@ -97,10 +99,12 @@ export async function POST(request: Request) {
       );
     }
 
-    console.error("POST /api/account/password failed", error);
+    logger.error("POST /api/account/password failed", error);
     return NextResponse.json(
       { error: "Could not change your password." },
       { status: 500 },
     );
   }
 }
+
+export const POST = withApi(POSTHandler);

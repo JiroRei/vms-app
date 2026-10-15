@@ -1,3 +1,5 @@
+import { logger } from "@/lib/logger";
+import { withApi } from "@/lib/api";
 import { after, NextResponse } from "next/server";
 
 import {
@@ -6,6 +8,9 @@ import {
 } from "@/lib/booking-verification";
 import { sendVerificationCodeEmail } from "@/lib/email";
 import { parseNameParts } from "@/lib/names";
+import { VERIFICATION_IP_LIMIT } from "@/lib/booking-config";
+import { consumeDatabaseRateLimit } from "@/lib/database-rate-limit";
+import { clientIp } from "@/lib/rate-limit";
 
 const MAX_EMAIL = 200;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
@@ -20,7 +25,9 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
  * timing says who has visited. The rate limit (429) also applies to every
  * address alike — see `issueVerificationCode()`.
  */
-export async function POST(request: Request) {
+async function POSTHandler(request: Request) {
+  const limit = await consumeDatabaseRateLimit(`verification-lookup:${clientIp(request.headers)}`, VERIFICATION_IP_LIMIT);
+  if (!limit.allowed) return NextResponse.json({ error: "Too many code requests. Please wait 15 minutes and try again." }, { status: 429, headers: { "Retry-After": String(limit.retryAfter) } });
   let body: unknown;
 
   try {
@@ -69,6 +76,7 @@ export async function POST(request: Request) {
           visitorEmail: value,
           code: delivery.code,
           validMinutes: CODE_TTL_MS / 60_000,
+          expiresAt: delivery.expiresAt,
         }),
       );
     }
@@ -78,10 +86,12 @@ export async function POST(request: Request) {
         "If we have a record for this email and name, we've sent a code.",
     });
   } catch (error) {
-    console.error("POST /api/booking/lookup failed", error);
+    logger.error("POST /api/booking/lookup failed", error);
     return NextResponse.json(
       { error: "Something went wrong. Please try again." },
       { status: 500 },
     );
   }
 }
+
+export const POST = withApi(POSTHandler);

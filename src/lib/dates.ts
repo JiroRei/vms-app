@@ -1,11 +1,15 @@
+import { SITE_TIMEZONE } from "@/lib/site-config";
+
 /**
- * Date and time helpers, all in the runtime's local time zone.
+ * Date and time helpers for date values and the configured site's display zone.
  *
  * The app treats "a day" as the building's own day rather than UTC — a
  * single-site VMS cares about the local calendar. Keeping both the day
  * boundaries and the display formatting in one place stops the history filters,
  * the frequency chart, the live list and the stale-visit cleanup from drifting
- * apart on where a day starts and on how a timestamp reads.
+ * apart on how a timestamp reads. Zone-aware day boundaries live in
+ * `booking-config.ts`; the `LocalDay` helpers below remain device-local for
+ * local date-time inputs.
  *
  * Nothing here imports `server-only`: the boundary helpers run in server code
  * and the formatters run on both sides of the RSC boundary.
@@ -67,9 +71,8 @@ export function endOfLocalDay(date: Date): Date {
  * on one screen and `15/09/2026, 14:30` on another. Pinning it makes every
  * surface agree and makes the hydration text match the server's.
  *
- * The time *zone* is still the runtime's own. Server-rendered cells therefore
- * carry `suppressHydrationWarning`, since a guard's phone may sit in a
- * different zone than the server.
+ * Display formatters use `SITE_TIMEZONE`, so server and browser agree even if
+ * the guard's device is in another zone.
  */
 const LOCALE = "en-US";
 
@@ -78,18 +81,21 @@ export const EMPTY_VALUE = "—";
 
 /** `02:30 PM` — same clock everywhere, so times line up in `tabular-nums`. */
 const timeFormat = new Intl.DateTimeFormat(LOCALE, {
+  timeZone: SITE_TIMEZONE,
   hour: "2-digit",
   minute: "2-digit",
 });
 
 /** `Sep 15` — axis ticks and other space-constrained labels. */
 const shortDateFormat = new Intl.DateTimeFormat(LOCALE, {
+  timeZone: SITE_TIMEZONE,
   month: "short",
   day: "numeric",
 });
 
 /** `Sep 15, 2026` — a date on its own, where the year still matters. */
 const dateFormat = new Intl.DateTimeFormat(LOCALE, {
+  timeZone: SITE_TIMEZONE,
   year: "numeric",
   month: "short",
   day: "numeric",
@@ -97,6 +103,7 @@ const dateFormat = new Intl.DateTimeFormat(LOCALE, {
 
 /** `Sep 15, 02:30 PM` — the table format for a timestamp. */
 const dateTimeFormat = new Intl.DateTimeFormat(LOCALE, {
+  timeZone: SITE_TIMEZONE,
   month: "short",
   day: "numeric",
   hour: "2-digit",
@@ -132,6 +139,17 @@ export function formatTime(value: DateInput): string {
 /** `Sep 15` */
 export function formatShortDate(value: DateInput): string {
   return format(shortDateFormat, value);
+}
+
+/** Formats a calendar key without shifting it through a device time zone. */
+export function formatDateKey(value: string): string {
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return EMPTY_VALUE;
+  return new Intl.DateTimeFormat(LOCALE, {
+    timeZone: "UTC",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(Date.UTC(year, month - 1, day, 12)));
 }
 
 /** `Sep 15, 2026` */

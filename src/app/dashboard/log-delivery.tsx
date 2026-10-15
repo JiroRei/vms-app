@@ -1,4 +1,6 @@
 "use client";
+import { apiErrorMessage } from "@/lib/api-error-message";
+
 
 import { useEffect, useRef, useState } from "react";
 
@@ -116,7 +118,7 @@ export function LogDelivery({ hosts }: { hosts: HostOption[] }) {
           setFieldErrors(data.fieldErrors as FieldErrors);
         } else {
           setFormError(
-            data?.error ?? "Could not log this delivery. Please try again.",
+            apiErrorMessage(data?.error) ?? "Could not log this delivery. Please try again.",
           );
         }
 
@@ -142,9 +144,6 @@ export function LogDelivery({ hosts }: { hosts: HostOption[] }) {
         onClick={openModal}
         className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-violet-600 px-5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900"
       >
-        <span aria-hidden className="text-base">
-          📦
-        </span>
         Log delivery
       </button>
 
@@ -174,6 +173,7 @@ export function LogDelivery({ hosts }: { hosts: HostOption[] }) {
                   Courier / company name
                 </label>
                 <input
+                  autoComplete="off"
                   ref={nameRef}
                   id="courier-name"
                   name="name"
@@ -197,6 +197,7 @@ export function LogDelivery({ hosts }: { hosts: HostOption[] }) {
                   <span className="font-normal text-gray-400">(optional)</span>
                 </label>
                 <select
+                  autoComplete="off"
                   id="recipient"
                   name="recipient"
                   value={recipient}
@@ -223,6 +224,7 @@ export function LogDelivery({ hosts }: { hosts: HostOption[] }) {
                 {recipient === OTHER && (
                   <>
                     <input
+                      autoComplete="off"
                       id="other-department"
                       name="recipientDepartment"
                       type="text"
@@ -255,6 +257,7 @@ export function LogDelivery({ hosts }: { hosts: HostOption[] }) {
                   <span className="font-normal text-gray-400">(optional)</span>
                 </label>
                 <input
+                  autoComplete="off"
                   id="delivery-note"
                   name="note"
                   type="text"

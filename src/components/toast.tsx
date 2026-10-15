@@ -79,9 +79,6 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                 : "border-green-200 bg-green-50 text-green-800 dark:border-green-500/30 dark:bg-green-950 dark:text-green-200"
             }`}
           >
-            <span aria-hidden className="text-base">
-              {toast.tone === "error" ? "⚠️" : "✓"}
-            </span>
             <span className="flex-1">{toast.message}</span>
           </div>
         ))}

@@ -1,3 +1,5 @@
+import { logger } from "@/lib/logger";
+import { withApi } from "@/lib/api";
 import { NextResponse } from "next/server";
 
 import { createHost } from "@/lib/hosts";
@@ -10,7 +12,7 @@ import { getSession } from "@/lib/session";
  * kiosk, so adding to it is a structural change rather than a shift task — the
  * same reasoning that puts the stale-visit cleanup behind ADMIN.
  */
-export async function POST(request: Request) {
+async function POSTHandler(request: Request) {
   const session = await getSession();
 
   if (!session) {
@@ -32,11 +34,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const { name, department } = (body ?? {}) as Record<string, unknown>;
+  const { name, department, email } = (body ?? {}) as Record<string, unknown>;
 
   const trimmedName = typeof name === "string" ? name.trim() : "";
   const trimmedDepartment =
     typeof department === "string" ? department.trim() : "";
+  const trimmedEmail = typeof email === "string" ? email.trim() : "";
 
   const fieldErrors: Record<string, string> = {};
 
@@ -47,6 +50,9 @@ export async function POST(request: Request) {
   if (!trimmedDepartment) {
     fieldErrors.department = "Please enter their department.";
   }
+  if (trimmedEmail && !/^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/.test(trimmedEmail)) {
+    fieldErrors.email = "Enter a valid host email address or leave it blank.";
+  }
 
   if (Object.keys(fieldErrors).length > 0) {
     return NextResponse.json({ fieldErrors }, { status: 400 });
@@ -56,14 +62,17 @@ export async function POST(request: Request) {
     const result = await createHost({
       name: trimmedName,
       department: trimmedDepartment,
+      email: trimmedEmail.toLowerCase() || null,
     });
 
     return NextResponse.json({ host: result.host }, { status: 201 });
   } catch (error) {
-    console.error("POST /api/hosts failed", error);
+    logger.error("POST /api/hosts failed", error);
     return NextResponse.json(
       { error: "Could not add this host." },
       { status: 500 },
     );
   }
 }
+
+export const POST = withApi(POSTHandler);

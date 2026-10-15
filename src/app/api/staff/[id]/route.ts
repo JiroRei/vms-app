@@ -1,3 +1,5 @@
+import { logger } from "@/lib/logger";
+import { withApi } from "@/lib/api";
 import { NextResponse } from "next/server";
 
 import { Role } from "@/generated/prisma/enums";
@@ -29,7 +31,7 @@ async function requireAdmin() {
 }
 
 /** PATCH /api/staff/[id] — promote or demote. */
-export async function PATCH(
+async function PATCHHandler(
   request: Request,
   context: RouteContext<"/api/staff/[id]">,
 ) {
@@ -87,7 +89,7 @@ export async function PATCH(
 
     return NextResponse.json({ staff: result.staff });
   } catch (error) {
-    console.error(`PATCH /api/staff/${id} failed`, error);
+    logger.error(`PATCH /api/staff/${id} failed`, error);
     return NextResponse.json(
       { error: "Could not update this account." },
       { status: 500 },
@@ -101,7 +103,7 @@ export async function PATCH(
  * Sessions and the credential go with it by cascade. No visit history does —
  * nothing in the visit chain references `User`.
  */
-export async function DELETE(
+async function DELETEHandler(
   _request: Request,
   context: RouteContext<"/api/staff/[id]">,
 ) {
@@ -138,10 +140,13 @@ export async function DELETE(
 
     return NextResponse.json({ deleted: true });
   } catch (error) {
-    console.error(`DELETE /api/staff/${id} failed`, error);
+    logger.error(`DELETE /api/staff/${id} failed`, error);
     return NextResponse.json(
       { error: "Could not remove this account." },
       { status: 500 },
     );
   }
 }
+
+export const PATCH = withApi(PATCHHandler);
+export const DELETE = withApi(DELETEHandler);

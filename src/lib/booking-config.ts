@@ -15,11 +15,22 @@
  * the visitor's browser happens to be. Instants (`Date`) are UTC as always.
  */
 
-/** The building's time zone. Slots are shown and validated in this zone. */
-export const BOOKING_TIMEZONE = "Asia/Manila";
+import { SITE_TIMEZONE, SITE_TIMEZONE_LABEL } from "@/lib/site-config";
+
+/**
+ * The building's time zone. Slots are shown and validated in this zone. Lives
+ * in `site-config.ts`, shared with the stale-visit cleanup, so the two can never
+ * disagree on where a day starts.
+ */
+export const BOOKING_TIMEZONE = SITE_TIMEZONE;
+
+export const PUBLIC_BOOKING_EMAIL_LIMIT = { window: 3600, max: 5 };
+export const PUBLIC_BOOKING_IP_LIMIT = { window: 3600, max: 20 };
+export const VERIFICATION_IP_LIMIT = { window: 15 * 60, max: 20 };
+export const KIOSK_HEARTBEAT_IP_LIMIT = { window: 60, max: 60 };
 
 /** How the picker names that zone to visitors. */
-export const BOOKING_TIMEZONE_LABEL = "Philippine time (UTC+8)";
+export const BOOKING_TIMEZONE_LABEL = SITE_TIMEZONE_LABEL;
 
 /** First slot of the day starts here (`HH:mm`). */
 export const BUSINESS_HOURS_START = "08:00";
@@ -32,6 +43,35 @@ export const SLOT_MINUTES = 30;
 
 /** How far ahead a visit may be booked, counting today as day 0. */
 export const MAX_DAYS_AHEAD = 30;
+
+/**
+ * How early, before its scheduled time, an appointment's code starts working
+ * at the kiosk and the guard's scanner. Only ever on the appointment's own day:
+ * a code for another day is refused whatever the time.
+ *
+ * TODO(multi-tenancy): global today — see MULTI_TENANCY_TODO.md.
+ */
+export const CHECK_IN_EARLY_MINUTES = 60;
+
+/**
+ * A profile becomes a recurring visitor — and is issued a visitor pass
+ * automatically — once it has at least this many linked visits within
+ * `RECURRING_WINDOW_DAYS`. Linked visits are appointment check-ins (for a
+ * profile-linked appointment) and pass check-ins; see `Visit.visitorProfileId`.
+ *
+ * TODO(multi-tenancy): global today — see MULTI_TENANCY_TODO.md.
+ */
+export const RECURRING_VISITS_THRESHOLD = 3;
+
+/** The look-back window for `RECURRING_VISITS_THRESHOLD`, in days. */
+export const RECURRING_WINDOW_DAYS = 30;
+
+/**
+ * How long a visitor pass stays valid without being used. Every successful use
+ * pushes `expiresAt` to now + this, so a pass lapses only after a year with no
+ * visit.
+ */
+export const PASS_VALID_DAYS = 365;
 
 /** A calendar day in `BOOKING_TIMEZONE`, as `YYYY-MM-DD`. */
 export type DateKey = string;
@@ -203,9 +243,10 @@ export type SlotCheck =
  * future. Returns the UTC instant to store.
  */
 export function checkSlot(value: string, now: Date): SlotCheck {
-  const [dateKey, time] = value.split("T");
+  const parts = value.split("T");
+  const [dateKey, time] = parts;
 
-  if (!dateKey || !time || !parseDateKey(dateKey) || !TIME_PATTERN.test(time)) {
+  if (parts.length !== 2 || !dateKey || !time || !parseDateKey(dateKey) || !TIME_PATTERN.test(time)) {
     return { ok: false, error: "Please choose a date and time." };
   }
 
@@ -265,4 +306,54 @@ export function formatSlotTime(time: string): string {
   const suffix = hours < 12 ? "AM" : "PM";
 
   return `${hours % 12 || 12}:${String(minutes % 60).padStart(2, "0")} ${suffix}`;
+}
+
+const zonedTimeFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: BOOKING_TIMEZONE,
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+const zonedDateFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: BOOKING_TIMEZONE,
+  weekday: "long",
+  month: "long",
+  day: "numeric",
+});
+
+/**
+ * "3:00 PM" on the building's clock. For server-built messages, which must
+ * read the same whatever zone the server or the reader's device is in.
+ */
+export function formatZonedTime(instant: Date): string {
+  return zonedTimeFormatter.format(instant);
+}
+
+/** "Thursday, October 15" on the building's clock. */
+export function formatZonedDate(instant: Date): string {
+  return zonedDateFormatter.format(instant);
+}
+
+const localValueFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: BOOKING_TIMEZONE,
+  hourCycle: "h23",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+/**
+ * `YYYY-MM-DDTHH:mm` on the building's clock — a `datetime-local` value that
+ * means the same wall-clock time whatever zone the browser is in.
+ */
+export function toDateTimeLocalInZone(instant: Date): string {
+  const parts: Record<string, string> = {};
+
+  for (const part of localValueFormatter.formatToParts(instant)) {
+    parts[part.type] = part.value;
+  }
+
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
 }

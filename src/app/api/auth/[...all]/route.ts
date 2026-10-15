@@ -1,3 +1,4 @@
+import { withApi } from "@/lib/api";
 import { toNextJsHandler } from "better-auth/next-js";
 
 import { auth } from "@/lib/auth";
@@ -14,4 +15,6 @@ import { auth } from "@/lib/auth";
  * Only GET and POST are exported; Better Auth uses no other verb, so PATCH,
  * PUT and DELETE fall through to a 405 rather than being silently routed.
  */
-export const { GET, POST } = toNextJsHandler(auth);
+const handlers = toNextJsHandler(auth);
+export const GET = withApi(handlers.GET);
+export const POST = withApi(handlers.POST);

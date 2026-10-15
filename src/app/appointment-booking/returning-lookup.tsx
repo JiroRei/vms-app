@@ -1,9 +1,12 @@
 "use client";
+import { apiErrorMessage } from "@/lib/api-error-message";
+
 
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { NameFields } from "@/components/name-fields";
+import { QrScanner } from "@/components/qr-scanner";
 import { formatFullName, validateNameParts, type NameErrors } from "@/lib/names";
 
 import {
@@ -13,6 +16,7 @@ import {
   nameFieldsClasses,
   primaryButtonClass,
   textButtonClass,
+  secondaryButtonClass,
 } from "./styles";
 
 export type VerifiedDetails = {
@@ -26,14 +30,15 @@ export type VerifiedDetails = {
 type TypedDetails = { email: string; firstName: string; lastName: string };
 
 /**
- * "I've been here before": email + name → 6-digit code → saved details.
+ * "I've been here before": visitor pass → saved details, with the existing
+ * email + name → 6-digit code flow available as a fallback.
  *
  * A profile is an email *and* a name — several people can share one address —
  * so the code is requested for, and only works with, that exact pair.
  *
- * The lookup response never says whether a profile was found, so this screen
- * can't either: it always moves on to the code entry with the same wording,
- * and offers a way out for someone who isn't on file after all.
+ * The email lookup never says whether a profile was found: that fallback
+ * always moves to code entry with the same wording. A signed pass must be
+ * validated before saved details are returned.
  */
 export function ReturningLookup({
   initialEmail,
@@ -41,15 +46,24 @@ export function ReturningLookup({
   initialLastName,
   onVerified,
   onNewVisitor,
+  allowPass = false,
 }: {
   initialEmail: string;
   initialFirstName: string;
   initialLastName: string;
   onVerified: (details: VerifiedDetails) => void;
-  /** Switch to the first-time flow, carrying over whatever was typed. */
-  onNewVisitor: (details: TypedDetails) => void;
+  /**
+   * Switch to the first-time flow, carrying over whatever was typed. Omitted on
+   * the manage page, where there is no first-time flow to switch to.
+   */
+  onNewVisitor?: (details: TypedDetails) => void;
+  /** Booking can use a pass; managing appointments still requires email verification. */
+  allowPass?: boolean;
 }) {
-  const [phase, setPhase] = useState<"details" | "code">("details");
+  const [phase, setPhase] = useState<"pass" | "details" | "code">(allowPass ? "pass" : "details");
+  const [passToken, setPassToken] = useState("");
+  const [scanning, setScanning] = useState(false);
+  const passRequestRunning = useRef(false);
   const [email, setEmail] = useState(initialEmail);
   const [firstName, setFirstName] = useState(initialFirstName);
   const [lastName, setLastName] = useState(initialLastName);
@@ -61,6 +75,42 @@ export function ReturningLookup({
   const [busy, setBusy] = useState(false);
 
   const identity = { email: email.trim(), firstName, lastName };
+
+  async function submitPass(value = passToken) {
+    if (passRequestRunning.current) return;
+    setError(null);
+    const token = value.trim();
+    if (!token) {
+      setError("Enter your visitor pass QR ID, or use your name and email.");
+      return;
+    }
+    passRequestRunning.current = true;
+    setBusy(true);
+    setScanning(false);
+    try {
+      const response = await fetch("/api/booking/pass/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        setError(apiErrorMessage(data?.error) ?? "Could not read your pass. Please try again.");
+        return;
+      }
+      onVerified({
+        email: data.email,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        phone: data.phone,
+      });
+    } catch {
+      setError("Network problem — please try again.");
+    } finally {
+      passRequestRunning.current = false;
+      setBusy(false);
+    }
+  }
 
   async function requestCode() {
     setError(null);
@@ -87,7 +137,7 @@ export function ReturningLookup({
           setEmailError(emailFieldError ?? null);
           setNameErrors(rest as NameErrors);
         } else {
-          setError(data?.error ?? "Could not send a code.");
+          setError(apiErrorMessage(data?.error) ?? "Could not send a code.");
         }
         return;
       }
@@ -121,7 +171,7 @@ export function ReturningLookup({
       const data = await response.json().catch(() => null);
 
       if (!response.ok) {
-        setError(data?.fieldErrors?.code ?? data?.error ?? "Could not verify.");
+        setError(data?.fieldErrors?.code ?? apiErrorMessage(data?.error) ?? "Could not verify.");
         return;
       }
 
@@ -138,15 +188,96 @@ export function ReturningLookup({
     }
   }
 
-  const newVisitorLink = (
+  const newVisitorLink = onNewVisitor ? (
     <button
       type="button"
+      disabled={busy}
       onClick={() => onNewVisitor(identity)}
       className={textButtonClass}
     >
       Continue as a new visitor
     </button>
-  );
+  ) : null;
+
+  if (phase === "pass") {
+    return (
+      <form
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!busy) void submitPass();
+        }}
+        className="space-y-5"
+      >
+        <p className="text-sm text-gray-600">
+          Use your visitor pass to bring up your saved details and book another visit.
+        </p>
+        {scanning ? (
+          <>
+            <QrScanner
+              active={!busy}
+              onScan={(value) => {
+                setPassToken(value);
+                void submitPass(value);
+              }}
+              unavailableMessage="No camera available. Enter your QR ID below, or use your name and email."
+              scanHint="Hold your visitor pass QR up to the camera."
+            />
+            <button type="button" disabled={busy} onClick={() => setScanning(false)} className={textButtonClass}>
+              Stop scanning
+            </button>
+          </>
+        ) : (
+          <button type="button" disabled={busy} onClick={() => setScanning(true)} className={`${secondaryButtonClass} w-full`}>
+            Scan visitor pass QR
+          </button>
+        )}
+        <div>
+          <label htmlFor="lookupPass" className={labelClass}>Visitor pass QR ID</label>
+          <input
+            id="lookupPass"
+            type="text"
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            maxLength={200}
+            disabled={busy}
+            value={passToken}
+            onChange={(event) => {
+              setPassToken(event.target.value);
+              setError(null);
+            }}
+            placeholder="vp1.…"
+            aria-invalid={Boolean(error)}
+            aria-describedby={`lookupPassNote${error ? " lookupPassError" : ""}`}
+            className={inputClass(Boolean(error))}
+          />
+          <p id="lookupPassNote" className="mt-2 text-sm text-gray-600">
+            Scan your pass or paste the full code from its QR.
+          </p>
+          {error && <p id="lookupPassError" role="alert" className={errorClass}>{error}</p>}
+        </div>
+        <button type="submit" disabled={busy} className={primaryButtonClass}>
+          {busy ? "Finding your details…" : "Continue with my pass"}
+        </button>
+        <p className="text-center">
+          <button
+            type="button"
+            disabled={busy}
+            className={textButtonClass}
+            onClick={() => {
+              setScanning(false);
+              setError(null);
+              setPhase("details");
+            }}
+          >
+            I don’t have my QR ID — use name and email
+          </button>
+        </p>
+        {newVisitorLink && <p className="text-center">{newVisitorLink}</p>}
+      </form>
+    );
+  }
 
   if (phase === "details") {
     return (
@@ -161,6 +292,19 @@ export function ReturningLookup({
         <p className="text-sm text-gray-600">
           Enter the email and name you booked with before.
         </p>
+        {allowPass && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setError(null);
+              setPhase("pass");
+            }}
+            className={textButtonClass}
+          >
+            Use my visitor pass QR ID instead
+          </button>
+        )}
 
         <NameFields
           idPrefix="lookup-"
@@ -186,7 +330,7 @@ export function ReturningLookup({
           <input
             id="lookupEmail"
             type="email"
-            autoComplete="email"
+            autoComplete="off"
             inputMode="email"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
@@ -217,7 +361,7 @@ export function ReturningLookup({
           {busy ? "Sending…" : "Send me a code"}
         </button>
 
-        <p className="text-center">{newVisitorLink}</p>
+        {newVisitorLink && <p className="text-center">{newVisitorLink}</p>}
       </form>
     );
   }
@@ -249,7 +393,7 @@ export function ReturningLookup({
           id="lookupCode"
           type="text"
           inputMode="numeric"
-          autoComplete="one-time-code"
+          autoComplete="off"
           maxLength={6}
           value={code}
           onChange={(event) => setCode(event.target.value.replace(/\D/g, ""))}
@@ -291,9 +435,11 @@ export function ReturningLookup({
         </button>
       </div>
 
-      <p className="border-t border-gray-200 pt-4 text-center text-sm text-gray-600">
-        No code? {newVisitorLink}
-      </p>
+      {newVisitorLink && (
+        <p className="border-t border-gray-200 pt-4 text-center text-sm text-gray-600">
+          No code? {newVisitorLink}
+        </p>
+      )}
     </form>
   );
 }

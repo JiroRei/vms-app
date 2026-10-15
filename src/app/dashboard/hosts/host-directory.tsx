@@ -1,4 +1,6 @@
 "use client";
+import { apiErrorMessage } from "@/lib/api-error-message";
+
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -15,13 +17,14 @@ const smallButtonClass =
   "rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50";
 const neutralButtonClass = `${smallButtonClass} border-gray-300 text-gray-700 hover:border-gray-400 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700`;
 
-type FieldErrors = { name?: string; department?: string };
+type FieldErrors = { name?: string; department?: string; email?: string };
 
 export function HostDirectory({ hosts }: { hosts: HostRecord[] }) {
   const router = useRouter();
 
   const [name, setName] = useState("");
   const [department, setDepartment] = useState("");
+  const [email, setEmail] = useState("");
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -30,6 +33,7 @@ export function HostDirectory({ hosts }: { hosts: HostRecord[] }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editDepartment, setEditDepartment] = useState("");
+  const [editEmail, setEditEmail] = useState("");
 
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [rowError, setRowError] = useState<string | null>(null);
@@ -71,6 +75,7 @@ export function HostDirectory({ hosts }: { hosts: HostRecord[] }) {
         body: JSON.stringify({
           name: name.trim(),
           department: department.trim(),
+          email: email.trim(),
         }),
       });
 
@@ -80,7 +85,7 @@ export function HostDirectory({ hosts }: { hosts: HostRecord[] }) {
         if (data?.fieldErrors) {
           setFieldErrors(data.fieldErrors as FieldErrors);
         } else {
-          setFormError(data?.error ?? "Could not add this host.");
+          setFormError(apiErrorMessage(data?.error) ?? "Could not add this host.");
         }
 
         return;
@@ -88,6 +93,7 @@ export function HostDirectory({ hosts }: { hosts: HostRecord[] }) {
 
       setName("");
       setDepartment("");
+      setEmail("");
       router.refresh();
     } catch {
       setFormError("Could not reach the server. Please try again.");
@@ -100,12 +106,13 @@ export function HostDirectory({ hosts }: { hosts: HostRecord[] }) {
     setEditingId(host.id);
     setEditName(host.name);
     setEditDepartment(host.department);
+    setEditEmail(host.email ?? "");
     setRowError(null);
   }
 
   async function patchHost(
     id: string,
-    body: { name?: string; department?: string; active?: boolean },
+    body: { name?: string; department?: string; email?: string; active?: boolean },
   ) {
     setPendingId(id);
     setRowError(null);
@@ -120,8 +127,8 @@ export function HostDirectory({ hosts }: { hosts: HostRecord[] }) {
       if (!response.ok) {
         const data = await response.json().catch(() => null);
         const fieldMessage =
-          data?.fieldErrors?.name ?? data?.fieldErrors?.department;
-        setRowError(fieldMessage ?? data?.error ?? "Could not update this host.");
+          data?.fieldErrors?.name ?? data?.fieldErrors?.department ?? data?.fieldErrors?.email;
+        setRowError(fieldMessage ?? apiErrorMessage(data?.error) ?? "Could not update this host.");
         return;
       }
 
@@ -186,6 +193,26 @@ export function HostDirectory({ hosts }: { hosts: HostRecord[] }) {
                 <p className={errorClass}>{fieldErrors.department}</p>
               )}
             </div>
+            <div>
+              <label htmlFor="host-email" className={labelClass}>
+                Email for arrival notices
+              </label>
+              <input
+                id="host-email"
+                type="email"
+                value={email}
+                onChange={(event) => {
+                  setEmail(event.target.value);
+                  clearError("email");
+                }}
+                className={controlClass}
+                placeholder="host@company.com"
+                autoComplete="off"
+              />
+              {fieldErrors.email && (
+                <p className={errorClass}>{fieldErrors.email}</p>
+              )}
+            </div>
           </div>
 
           {formError && (
@@ -227,7 +254,6 @@ export function HostDirectory({ hosts }: { hosts: HostRecord[] }) {
         <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
           {hosts.length === 0 ? (
             <EmptyState
-              icon="👥"
               title="No hosts yet"
               hint="Add someone above. Until at least one host exists, the walk-in kiosk has nobody to offer and a visitor cannot finish checking in."
             />
@@ -241,6 +267,9 @@ export function HostDirectory({ hosts }: { hosts: HostRecord[] }) {
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                       Department
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                      Arrival email
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                       History
@@ -263,6 +292,7 @@ export function HostDirectory({ hosts }: { hosts: HostRecord[] }) {
                         <td className="px-4 py-3">
                           {editing ? (
                             <input
+                              autoComplete="off"
                               value={editName}
                               onChange={(event) =>
                                 setEditName(event.target.value)
@@ -284,6 +314,7 @@ export function HostDirectory({ hosts }: { hosts: HostRecord[] }) {
                         <td className="px-4 py-3">
                           {editing ? (
                             <input
+                              autoComplete="off"
                               value={editDepartment}
                               onChange={(event) =>
                                 setEditDepartment(event.target.value)
@@ -294,6 +325,22 @@ export function HostDirectory({ hosts }: { hosts: HostRecord[] }) {
                           ) : (
                             <span className="text-sm text-gray-500 dark:text-gray-400">
                               {host.department}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {editing ? (
+                            <input
+                              autoComplete="off"
+                              type="email"
+                              value={editEmail}
+                              onChange={(event) => setEditEmail(event.target.value)}
+                              className={controlClass}
+                              aria-label="Host arrival email"
+                            />
+                          ) : (
+                            <span className="text-sm text-gray-500 dark:text-gray-400">
+                              {host.email ?? "Not set"}
                             </span>
                           )}
                         </td>
@@ -320,6 +367,7 @@ export function HostDirectory({ hosts }: { hosts: HostRecord[] }) {
                                     void patchHost(host.id, {
                                       name: editName,
                                       department: editDepartment,
+                                      email: editEmail,
                                     })
                                   }
                                   className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-blue-300"

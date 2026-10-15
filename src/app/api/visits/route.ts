@@ -1,10 +1,13 @@
-import { NextResponse } from "next/server";
+import { logger } from "@/lib/logger";
+import { withApi } from "@/lib/api";
+import { after, NextResponse } from "next/server";
 
 import { parseNameParts } from "@/lib/names";
 import { prisma } from "@/lib/prisma";
 import { findSelectablePurpose } from "@/lib/purposes";
 import { clientIp, consumeRateLimit } from "@/lib/rate-limit";
 import { getSession } from "@/lib/session";
+import { notifyHostArrival } from "@/lib/host-notify";
 import { createWalkInVisit, getActiveVisits } from "@/lib/visits";
 
 /**
@@ -20,7 +23,7 @@ const CHECK_IN_LIMIT = { window: 60, max: 20 };
  * Staff-only: this returns visitor names and purposes, so it requires the
  * dashboard session. The kiosk never calls it.
  */
-export async function GET() {
+async function GETHandler() {
   const session = await getSession();
 
   if (!session) {
@@ -31,7 +34,7 @@ export async function GET() {
     const visits = await getActiveVisits();
     return NextResponse.json({ visits });
   } catch (error) {
-    console.error("GET /api/visits failed", error);
+    logger.error("GET /api/visits failed", error);
     return NextResponse.json(
       { error: "Failed to load active visits." },
       { status: 500 },
@@ -50,7 +53,7 @@ export async function GET() {
  * rate limited — generously, because a whole tour group checking in one after
  * another is normal and must not be turned away.
  */
-export async function POST(request: Request) {
+async function POSTHandler(request: Request) {
   const limit = consumeRateLimit(
     `check-in:${clientIp(request.headers)}`,
     CHECK_IN_LIMIT,
@@ -128,12 +131,23 @@ export async function POST(request: Request) {
       hostId: selectedHostId,
     });
 
+    after(() => notifyHostArrival({
+      hostId: selectedHostId,
+      firstName: name.firstName,
+      lastName: name.lastName,
+      purposeLabel: purpose.label,
+      checkedInAt: new Date(),
+    }));
+
     return NextResponse.json(created, { status: 201 });
   } catch (error) {
-    console.error("POST /api/visits failed", error);
+    logger.error("POST /api/visits failed", error);
     return NextResponse.json(
       { error: "Could not complete check-in. Please ask reception for help." },
       { status: 500 },
     );
   }
 }
+
+export const GET = withApi(GETHandler);
+export const POST = withApi(POSTHandler);

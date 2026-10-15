@@ -1,8 +1,9 @@
+import { logger } from "@/lib/logger";
+import { withApi } from "@/lib/api";
 import { NextResponse } from "next/server";
 
 import { clientIp, consumeRateLimit } from "@/lib/rate-limit";
 import {
-  APPOINTMENT_FAILURE_MESSAGE,
   APPOINTMENT_FAILURE_STATUS,
   validateAppointmentToken,
 } from "@/lib/qr";
@@ -27,7 +28,7 @@ const LOOKUP_LIMIT = { window: 60, max: 30 };
  * Public, like the rest of the kiosk. Reads nothing out unless the code is
  * valid, so an attacker learns only whether a code they already hold works.
  */
-export async function POST(request: Request) {
+async function POSTHandler(request: Request) {
   const limit = consumeRateLimit(
     `appointment-lookup:${clientIp(request.headers)}`,
     LOOKUP_LIMIT,
@@ -68,7 +69,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           reason: result.reason,
-          error: APPOINTMENT_FAILURE_MESSAGE[result.reason],
+          error: result.message,
         },
         { status: APPOINTMENT_FAILURE_STATUS[result.reason] },
       );
@@ -76,10 +77,12 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ appointment: result.appointment });
   } catch (error) {
-    console.error("POST /api/appointments/validate failed", error);
+    logger.error("POST /api/appointments/validate failed", error);
     return NextResponse.json(
       { error: "Could not look up that appointment." },
       { status: 500 },
     );
   }
 }
+
+export const POST = withApi(POSTHandler);

@@ -1,4 +1,6 @@
 "use client";
+import { apiErrorMessage } from "@/lib/api-error-message";
+
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -53,7 +55,7 @@ export function PurposeOptionsManager({
 
       if (!response.ok) {
         showToast(
-          data?.fieldErrors?.label ?? data?.error ?? fallbackError,
+          data?.fieldErrors?.label ?? apiErrorMessage(data?.error) ?? fallbackError,
           "error",
         );
         return null;
@@ -176,6 +178,7 @@ export function PurposeOptionsManager({
             Add a purpose
           </label>
           <input
+            autoComplete="off"
             id="new-purpose"
             name="label"
             type="text"
@@ -254,6 +257,7 @@ export function PurposeOptionsManager({
                     <td className="px-4 py-3">
                       {editing ? (
                         <input
+                          autoComplete="off"
                           type="text"
                           value={draftLabel}
                           autoFocus

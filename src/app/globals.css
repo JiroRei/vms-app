@@ -1,6 +1,14 @@
-@import "tailwindcss";
+/* Automatic source detection is off: it scanned build output such as
+   Turbopack's binary cache (<distDir>/cache/turbopack/*.sst) and emitted
+   garbage classes that broke CSS parsing. Only these directories hold class
+   names; paths are relative to this file. */
+@import "tailwindcss" source(none);
+@source "../app";
+@source "../components";
+@source "../lib";
+@source not "../generated";
 
-@variant dark (&:where(.dark, .dark *));
+@custom-variant dark (&:where(.dark, .dark *):not(:where(.visitor-shell, .visitor-shell *)));
 
 :root {
   --background: #ffffff;
@@ -26,9 +34,81 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+html.dark {
+  color-scheme: dark;
+  --background: #030712;
+  --foreground: #f3f4f6;
+}
+
+html:not(.dark) { color-scheme: light; }
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Visitor forms keep a consistent light palette on shared kiosks, independent
+   of the staff dashboard's saved theme and the browser's native control theme. */
+.visitor-shell {
+  --background: #f9fafb;
+  --foreground: #111827;
+  min-height: 100dvh;
+  width: 100%;
+  flex: 1;
+  color-scheme: light;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+::selection { background: color-mix(in oklab, var(--accent) 24%, white); }
+
+:where(a, button, input, select, textarea):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  :where(a, button, input, select, textarea) { transition-duration: 150ms; }
+}
+
+@media print {
+  @page { size: A4 landscape; margin: 12mm; }
+  @page roll-call { size: A4 portrait; margin: 12mm; }
+  html, body { height: auto !important; min-height: 0 !important; }
+  body, .dashboard-shell, .dashboard-content, .dashboard-content main {
+    display: block !important;
+    min-height: 0 !important;
+    background: white !important;
+    color: black !important;
   }
+  .print-hidden, [aria-live], nextjs-portal { display: none !important; }
+  .dashboard-content main { padding: 0 !important; }
+  .print-report, .print-report * {
+    color: black !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+  .print-report h1 { font-size: 16pt; }
+  .print-table-wrap { overflow: visible !important; }
+  .print-table { font-size: 10pt; table-layout: fixed; }
+  .print-table th, .print-table td { border-color: black !important; overflow-wrap: anywhere; }
+  .print-table thead { display: table-header-group; }
+  .print-table tr { break-inside: avoid; page-break-inside: avoid; }
+  .print-table th:first-child { width: 5%; }
+  .roll-call-report { page: roll-call; color-scheme: light; }
+  .roll-call-report h2 { break-after: avoid; }
+  .roll-call-report header { break-inside: avoid; }
+  .roll-call-expected-back { border-color: black !important; }
+  .roll-call-on-site .print-table th:nth-child(1) { width: 26%; }
+  .roll-call-on-site .print-table th:nth-child(2) { width: 11%; }
+  .roll-call-on-site .print-table th:nth-child(3) { width: 29%; }
+  .roll-call-on-site .print-table th:nth-child(4) { width: 16%; }
+  .roll-call-on-site .print-table th:nth-child(5) { width: 18%; }
+  .roll-call-expected-back .print-table th:nth-child(1) { width: 30%; }
+  .roll-call-expected-back .print-table th:nth-child(2) { width: 45%; }
+  .roll-call-expected-back .print-table th:nth-child(3) { width: 25%; }
+  .roll-call-empty-box { width: 4mm; height: 4mm; border: 1pt solid black; }
 }

@@ -1,4 +1,6 @@
 "use client";
+import { apiErrorMessage } from "@/lib/api-error-message";
+
 
 import { useState } from "react";
 
@@ -73,7 +75,7 @@ export function ChangePasswordForm({
             : "newPassword";
           document.getElementById(first)?.focus();
         } else {
-          setFormError(data?.error ?? "Could not change your password.");
+          setFormError(apiErrorMessage(data?.error) ?? "Could not change your password.");
         }
 
         return;
@@ -128,7 +130,7 @@ export function ChangePasswordForm({
             clearError("currentPassword");
           }}
           className={controlClass}
-          autoComplete="current-password"
+          autoComplete="off"
         />
         {fieldErrors.currentPassword && (
           <p className={errorClass}>{fieldErrors.currentPassword}</p>
@@ -149,7 +151,7 @@ export function ChangePasswordForm({
           }}
           className={controlClass}
           placeholder={`At least ${minPasswordLength} characters`}
-          autoComplete="new-password"
+          autoComplete="off"
         />
         {fieldErrors.newPassword && (
           <p className={errorClass}>{fieldErrors.newPassword}</p>
@@ -169,7 +171,7 @@ export function ChangePasswordForm({
             clearError("confirmPassword");
           }}
           className={controlClass}
-          autoComplete="new-password"
+          autoComplete="off"
         />
         {fieldErrors.confirmPassword && (
           <p className={errorClass}>{fieldErrors.confirmPassword}</p>

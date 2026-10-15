@@ -30,6 +30,12 @@ export default async function BookPage() {
           <Link href="/" className="text-gray-600 hover:text-gray-900">
             Back to home
           </Link>
+          <Link
+            href="/appointment-booking/manage"
+            className="text-gray-600 hover:text-gray-900"
+          >
+            Manage an appointment
+          </Link>
           <Link href="/privacy" className="text-gray-600 hover:text-gray-900">
             Privacy Policy
           </Link>

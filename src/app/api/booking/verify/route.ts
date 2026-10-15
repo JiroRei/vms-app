@@ -1,3 +1,5 @@
+import { logger } from "@/lib/logger";
+import { withApi } from "@/lib/api";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
@@ -8,6 +10,10 @@ import {
   verifyCode,
 } from "@/lib/booking-verification";
 import { parseNameParts } from "@/lib/names";
+import { BOOKING_PASS_COOKIE_NAME, BOOKING_PASS_COOKIE_PATH } from "@/lib/booking-pass";
+import { VERIFICATION_IP_LIMIT } from "@/lib/booking-config";
+import { consumeDatabaseRateLimit } from "@/lib/database-rate-limit";
+import { clientIp } from "@/lib/rate-limit";
 
 const CODE_PATTERN = /^\d{6}$/;
 
@@ -25,7 +31,9 @@ const FAILURE =
  * checks before linking a booking to it, and returns the stored name and phone
  * for the form to prefill.
  */
-export async function POST(request: Request) {
+async function POSTHandler(request: Request) {
+  const limit = await consumeDatabaseRateLimit(`verification-check:${clientIp(request.headers)}`, VERIFICATION_IP_LIMIT);
+  if (!limit.allowed) return NextResponse.json({ error: "Too many verification attempts. Please wait 15 minutes and try again." }, { status: 429, headers: { "Retry-After": String(limit.retryAfter) } });
   let body: unknown;
 
   try {
@@ -65,6 +73,7 @@ export async function POST(request: Request) {
     }
 
     const cookieStore = await cookies();
+    cookieStore.delete({ name: BOOKING_PASS_COOKIE_NAME, path: BOOKING_PASS_COOKIE_PATH });
     cookieStore.set(
       VERIFIED_COOKIE_NAME,
       signVerifiedCookie(profile),
@@ -77,10 +86,12 @@ export async function POST(request: Request) {
       phone: profile.phone,
     });
   } catch (error) {
-    console.error("POST /api/booking/verify failed", error);
+    logger.error("POST /api/booking/verify failed", error);
     return NextResponse.json(
       { error: "Something went wrong. Please try again." },
       { status: 500 },
     );
   }
 }
+
+export const POST = withApi(POSTHandler);

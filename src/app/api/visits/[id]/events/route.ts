@@ -1,3 +1,5 @@
+import { logger } from "@/lib/logger";
+import { withApi } from "@/lib/api";
 import { NextResponse } from "next/server";
 
 import { getSession } from "@/lib/session";
@@ -11,7 +13,7 @@ import { getVisitEvents } from "@/lib/visits";
  * neither the live list nor history carries event histories for rows nobody
  * has opened.
  */
-export async function GET(
+async function GETHandler(
   _request: Request,
   context: RouteContext<"/api/visits/[id]/events">,
 ) {
@@ -32,10 +34,12 @@ export async function GET(
 
     return NextResponse.json(timeline);
   } catch (error) {
-    console.error(`GET /api/visits/${id}/events failed`, error);
+    logger.error(`GET /api/visits/${id}/events failed`, error);
     return NextResponse.json(
       { error: "Failed to load this visit's timeline." },
       { status: 500 },
     );
   }
 }
+
+export const GET = withApi(GETHandler);

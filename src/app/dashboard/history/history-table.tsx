@@ -4,12 +4,14 @@ import { Fragment, useState } from "react";
 
 import { TimelineChevron, VisitTimeline } from "@/components/visit-timeline";
 import { VisitorTypeBadge } from "@/components/visitor-type-badge";
-import { formatDuration } from "@/lib/dates";
+import { EMPTY_VALUE, formatDuration } from "@/lib/dates";
 import type { HistoryVisit } from "@/lib/history";
 import { formatFullName } from "@/lib/names";
+import { SITE_TIMEZONE } from "@/lib/site-config";
 
 function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString([], {
+  return new Date(iso).toLocaleString("en-US", {
+    timeZone: SITE_TIMEZONE,
     month: "short",
     day: "numeric",
     hour: "2-digit",
@@ -29,6 +31,21 @@ function formatDateTime(iso: string): string {
  * Expanding it is what shows the round trip it made on the way.
  */
 function StatusCell({ visit }: { visit: HistoryVisit }) {
+  if (visit.checkOutTime && visit.closedAutomatically) {
+    return (
+      <div suppressHydrationWarning>
+        <span className="tabular-nums text-gray-600 dark:text-gray-300">
+          {formatDateTime(visit.checkOutTime)}
+        </span>
+        {/* The time is the configured auto-close time, not a departure, so a
+            duration computed from it would be invented. */}
+        <span className="block text-xs text-gray-400 dark:text-gray-500">
+          Auto-closed · time on site {EMPTY_VALUE}
+        </span>
+      </div>
+    );
+  }
+
   if (visit.checkOutTime) {
     return (
       <div suppressHydrationWarning>
@@ -40,13 +57,13 @@ function StatusCell({ visit }: { visit: HistoryVisit }) {
         <span className="block text-xs text-gray-400 dark:text-gray-500">
           {formatDuration(visit.checkInTime, visit.checkOutTime)} on site
         </span>
-        {/* No name means the overnight cleanup closed it rather than a person
-            at the desk — a different kind of record, so it says so. */}
-        <span className="block text-xs text-gray-400 dark:text-gray-500">
-          {visit.checkedOutByName
-            ? `by ${visit.checkedOutByName}`
-            : "closed automatically"}
-        </span>
+        {/* No name here means a checkout from before attribution existed;
+            auto-closed visits are handled above. */}
+        {visit.checkedOutByName && (
+          <span className="block text-xs text-gray-400 dark:text-gray-500">
+            by {visit.checkedOutByName}
+          </span>
+        )}
       </div>
     );
   }

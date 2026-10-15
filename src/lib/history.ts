@@ -2,12 +2,10 @@ import "server-only";
 
 import type { Prisma } from "@/generated/prisma/client";
 import type { VisitStatus, VisitorType } from "@/generated/prisma/enums";
-import {
-  formatShortDate,
-  startOfLocalDay,
-  toLocalDateKey,
-} from "@/lib/dates";
+import { addDaysToKey, dateKeyInZone, zonedTimeToUtc } from "@/lib/booking-config";
+import { formatDateKey } from "@/lib/dates";
 import { prisma } from "@/lib/prisma";
+import { sweepStaleVisitsIfDue } from "@/lib/stale-visits";
 
 export const PAGE_SIZE = 25;
 
@@ -38,11 +36,17 @@ export type HistoryVisit = {
   /**
    * Who closed the visit, as their name read at the time.
    *
-   * Null means nobody did: the stale-visit cleanup closed it because it was
-   * left open overnight. That is worth showing rather than hiding — "closed by
-   * the system" and "closed by a person at the desk" are different records.
+   * Null when no person is on record: either the stale-visit cleanup closed it
+   * (see `closedAutomatically`, which is what says so) or it was checked out
+   * before checkouts were attributed.
    */
   checkedOutByName: string | null;
+  /**
+   * The stale-visit cleanup closed this visit. `checkOutTime` is then the
+   * configured auto-close time rather than a departure, so no time on site is
+   * shown for it.
+   */
+  closedAutomatically: boolean;
 };
 
 export type HistoryFilters = {
@@ -52,6 +56,7 @@ export type HistoryFilters = {
   to: string;
   /** When true, DELIVERY rows are excluded from the table. */
   hideDeliveries: boolean;
+  type: "" | VisitorType;
   page: number;
 };
 
@@ -63,23 +68,43 @@ export type HistoryPage = {
 };
 
 /**
- * Turns a `YYYY-MM-DD` value from a date input into a Date at the start or end
- * of that day.
- *
- * Parsed as local time deliberately: `new Date("2026-09-15")` would be UTC
- * midnight, which shifts the boundary by the server's offset and drops visits
- * from the edges of the range. A single-site VMS wants the server's own day.
+ * Site midnight, or the exclusive next midnight for an inclusive date range.
+ * Impossible dates are ignored consistently by the history screen and export.
  */
 function parseDateBoundary(value: string, edge: "start" | "end"): Date | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+  try {
+    return zonedTimeToUtc(edge === "end" ? addDaysToKey(value, 1) : value, "00:00");
+  } catch {
     return null;
   }
+}
 
-  const date = new Date(
-    `${value}${edge === "start" ? "T00:00:00.000" : "T23:59:59.999"}`,
-  );
+export type HistoryParams = Record<string, string | string[] | undefined>;
 
-  return Number.isNaN(date.getTime()) ? null : date;
+/** Parse and build once for both the history screen and the CSV endpoint. */
+export function getHistoryQuery(params: HistoryParams) {
+  const read = (key: string) => typeof params[key] === "string" ? params[key] : "";
+  const rawType = read("type");
+  const type = rawType === "GUEST" || rawType === "DELIVERY" ? rawType : "";
+  const filters: HistoryFilters = {
+    search: read("search").trim(),
+    hostId: read("hostId"),
+    from: parseDateBoundary(read("from"), "start") ? read("from") : "",
+    to: parseDateBoundary(read("to"), "end") ? read("to") : "",
+    type,
+    hideDeliveries: !type && read("hideDeliveries") === "1",
+    page: Math.max(1, Number.parseInt(read("page"), 10) || 1),
+  };
+  return { filters, where: buildWhere(filters) };
+}
+
+export function historyFilterParams(filters: HistoryFilters): URLSearchParams {
+  const query = new URLSearchParams();
+  for (const key of ["search", "hostId", "from", "to", "type"] as const) {
+    if (filters[key]) query.set(key, filters[key]);
+  }
+  if (filters.hideDeliveries) query.set("hideDeliveries", "1");
+  return query;
 }
 
 /**
@@ -129,8 +154,8 @@ function buildWhere(filters: HistoryFilters): Prisma.VisitWhereInput {
     visitor.hostId = filters.hostId;
   }
 
-  if (filters.hideDeliveries) {
-    visitor.type = "GUEST";
+  if (filters.type || filters.hideDeliveries) {
+    visitor.type = filters.type || "GUEST";
   }
 
   if (Object.keys(visitor).length > 0) {
@@ -143,7 +168,7 @@ function buildWhere(filters: HistoryFilters): Prisma.VisitWhereInput {
   if (from || to) {
     where.checkInTime = {
       ...(from ? { gte: from } : {}),
-      ...(to ? { lte: to } : {}),
+      ...(to ? { lt: to } : {}),
     };
   }
 
@@ -151,9 +176,11 @@ function buildWhere(filters: HistoryFilters): Prisma.VisitWhereInput {
 }
 
 export async function getVisitHistory(
-  filters: HistoryFilters,
+  { filters, where }: ReturnType<typeof getHistoryQuery>,
 ): Promise<HistoryPage> {
-  const where = buildWhere(filters);
+  // Close stale visits first (throttled) so none of this page still reads
+  // "Still inside" for a visitor from a day that is over.
+  await sweepStaleVisitsIfDue();
 
   const total = await prisma.visit.count({ where });
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -186,12 +213,13 @@ export async function getVisitHistory(
       checkOutTime: visit.checkOutTime?.toISOString() ?? null,
       status: visit.status,
       checkedOutByName: visit.checkedOutByName,
+      closedAutomatically: visit.closedAutomatically,
     })),
   };
 }
 
 export type FrequencyPoint = {
-  /** `YYYY-MM-DD`, in the server's local time zone. */
+  /** `YYYY-MM-DD`, in the configured site time zone. */
   date: string;
   label: string;
   count: number;
@@ -200,37 +228,36 @@ export type FrequencyPoint = {
 /**
  * Visit counts per day for the last `days` days, inclusive of today.
  *
- * Aggregated in memory: the row count here is small, and doing it in JS keeps
- * the day boundaries in the same local time zone as the rest of the page.
+ * Aggregated in memory: the row count here is small, and date keys and
+ * boundaries use the configured site time zone.
  * Days with no visits are returned as zeroes so the chart has no gaps.
  */
 export async function getVisitorFrequency(
   days: number,
 ): Promise<FrequencyPoint[]> {
-  const start = startOfLocalDay();
-  start.setDate(start.getDate() - (days - 1));
+  const lastKey = dateKeyInZone(new Date());
+  const firstKey = addDaysToKey(lastKey, -(days - 1));
+  const start = zonedTimeToUtc(firstKey, "00:00");
+  const end = zonedTimeToUtc(addDaysToKey(lastKey, 1), "00:00");
 
   const visits = await prisma.visit.findMany({
-    where: { checkInTime: { gte: start } },
+    where: { checkInTime: { gte: start, lt: end } },
     select: { checkInTime: true },
   });
 
   const counts = new Map<string, number>();
 
   for (const visit of visits) {
-    const key = toLocalDateKey(visit.checkInTime);
+    const key = dateKeyInZone(visit.checkInTime);
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
 
   return Array.from({ length: days }, (_, offset) => {
-    const date = new Date(start);
-    date.setDate(start.getDate() + offset);
-
-    const key = toLocalDateKey(date);
+    const key = addDaysToKey(firstKey, offset);
 
     return {
       date: key,
-      label: formatShortDate(date),
+      label: formatDateKey(key),
       count: counts.get(key) ?? 0,
     };
   });

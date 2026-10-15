@@ -12,7 +12,7 @@
  */
 
 const inputBase =
-  "block w-full rounded-lg border px-4 py-3 shadow-sm transition-colors placeholder:text-gray-400 focus:outline-none focus:ring-1";
+  "block w-full rounded-lg border bg-white px-4 py-3 text-gray-900 shadow-sm transition-colors placeholder:text-gray-500 focus:outline-none focus:ring-1";
 
 /** The error state only recolors: the box must not resize as it goes invalid. */
 function inputTone(hasError: boolean): string {

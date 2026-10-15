@@ -1,12 +1,11 @@
 "use client";
+import { apiErrorMessage } from "@/lib/api-error-message";
+
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { EmptyState } from "@/components/empty-state";
 import { NameFields } from "@/components/name-fields";
-import type { AppointmentListItem } from "@/lib/appointments";
-import { formatDateTime } from "@/lib/dates";
 import { formatFullName, validateNameParts } from "@/lib/names";
 import type { PurposeChoice } from "@/lib/purposes";
 import type { HostOption } from "@/lib/visits";
@@ -48,19 +47,13 @@ const nameFieldsClasses = {
   error: "mt-1 text-sm text-red-600 dark:text-red-400",
 };
 
-/** Why a closed appointment is closed, for the badge in place of "Cancel". */
-function closedLabel(appointment: AppointmentListItem): string {
-  if (appointment.status === "CHECKED_IN") return "Checked in";
-  if (appointment.status === "CANCELLED") return "Cancelled";
-  return "Expired";
-}
-
 type Created = {
   referenceNumber: string;
   firstName: string;
   lastName: string;
   visitorEmail: string;
   emailSent: boolean;
+  emailQueued?: boolean;
 };
 
 function focusFirstError(errors: FieldErrors) {
@@ -68,12 +61,11 @@ function focusFirstError(errors: FieldErrors) {
   if (first) document.getElementById(first)?.focus();
 }
 
+/** The pre-registration form. The list lives in `AppointmentBoard`. */
 export function AppointmentManager({
-  appointments,
   hosts,
   purposes,
 }: {
-  appointments: AppointmentListItem[];
   hosts: HostOption[];
   /** Active options only. */
   purposes: PurposeChoice[];
@@ -99,16 +91,6 @@ export function AppointmentManager({
    */
   const [created, setCreated] = useState<Created | null>(null);
   const [copied, setCopied] = useState(false);
-
-  const [showUsed, setShowUsed] = useState(false);
-  const [cancellingRef, setCancellingRef] = useState<string | null>(null);
-  const [pendingRef, setPendingRef] = useState<string | null>(null);
-  const [listError, setListError] = useState<string | null>(null);
-
-  const visible = showUsed
-    ? appointments
-    : appointments.filter((appointment) => appointment.open);
-  const usedCount = appointments.filter((a) => !a.open).length;
 
   /** Drops a field's complaint as soon as it is being corrected. */
   function clearError(field: FieldName) {
@@ -185,7 +167,7 @@ export function AppointmentManager({
           setFormError("Your session has ended. Please sign in again.");
           router.refresh();
         } else {
-          setFormError(data?.error ?? "Could not create this appointment.");
+          setFormError(apiErrorMessage(data?.error) ?? "Could not create this appointment.");
         }
 
         return;
@@ -194,9 +176,10 @@ export function AppointmentManager({
       const data = (await response.json()) as {
         appointment: Omit<Created, "emailSent">;
         emailSent: boolean;
+        emailQueued?: boolean;
       };
 
-      setCreated({ ...data.appointment, emailSent: data.emailSent });
+      setCreated({ ...data.appointment, emailSent: data.emailSent, emailQueued: data.emailQueued });
       setCopied(false);
       setFirstName("");
       setLastName("");
@@ -225,35 +208,6 @@ export function AppointmentManager({
     }
   }
 
-  async function confirmCancel(reference: string) {
-    setPendingRef(reference);
-    setListError(null);
-
-    try {
-      const response = await fetch(`/api/appointments/manage/${reference}`, {
-        method: "DELETE",
-      });
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => null);
-
-        if (response.status === 401) {
-          setListError("Your session has ended. Please sign in again.");
-        } else {
-          setListError(data?.error ?? "Could not cancel this appointment.");
-        }
-      }
-    } catch {
-      setListError("Could not reach the server. Please try again.");
-    } finally {
-      setPendingRef(null);
-      setCancellingRef(null);
-      // Reconcile either way: on a 409 the row has been redeemed and should
-      // now show as checked in rather than simply refusing to disappear.
-      router.refresh();
-    }
-  }
-
   return (
     <div className="space-y-6">
       {/* ---------------------------------------------------------------- */}
@@ -275,7 +229,7 @@ export function AppointmentManager({
               pre-registered.{" "}
               {created.emailSent
                 ? `Their QR code was emailed to ${created.visitorEmail}. The reference also works:`
-                : "The email could not be sent, so give them this reference:"}
+                : created.emailQueued ? "Their email is queued for delivery. Give them this reference while they wait:" : "The email could not be sent, so give them this reference:"}
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-3">
               <code className="rounded-md bg-white px-3 py-2 font-mono text-xl font-bold tracking-wider text-gray-900 shadow-sm dark:bg-gray-900 dark:text-white">
@@ -339,6 +293,7 @@ export function AppointmentManager({
                 Purpose
               </label>
               <select
+                autoComplete="off"
                 id="purposeId"
                 value={purposeId}
                 onChange={(event) => {
@@ -369,6 +324,7 @@ export function AppointmentManager({
                 Host
               </label>
               <select
+                autoComplete="off"
                 id="hostId"
                 value={hostId}
                 onChange={(event) => {
@@ -399,6 +355,7 @@ export function AppointmentManager({
                 Expected
               </label>
               <input
+                autoComplete="off"
                 id="scheduledFor"
                 type="datetime-local"
                 value={scheduledFor}
@@ -438,146 +395,6 @@ export function AppointmentManager({
         </form>
       </div>
 
-      {/* ---------------------------------------------------------------- */}
-      {/* List                                                              */}
-      {/* ---------------------------------------------------------------- */}
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-sm text-gray-500 dark:text-gray-400">
-            {visible.length === 0
-              ? "Nothing to show"
-              : `${visible.length} appointment${visible.length === 1 ? "" : "s"}`}
-          </p>
-
-          {usedCount > 0 && (
-            <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-              <input
-                type="checkbox"
-                checked={showUsed}
-                onChange={(event) => setShowUsed(event.target.checked)}
-                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-              />
-              Show past ({usedCount})
-            </label>
-          )}
-        </div>
-
-        {listError && (
-          <p
-            role="alert"
-            className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300"
-          >
-            {listError}
-          </p>
-        )}
-
-        <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
-          {visible.length === 0 ? (
-            <EmptyState
-              icon="📋"
-              title="No appointments waiting"
-              hint="Pre-register a visitor above. They scan the emailed QR code, or type the reference number, at the kiosk instead of filling in the walk-in form."
-            />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                <thead className="bg-gray-50 dark:bg-gray-900/40">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                      Reference
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                      Visitor
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                      Host
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                      Expected
-                    </th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                      <span className="sr-only">Actions</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                  {visible.map((appointment) => (
-                    <tr key={appointment.id}>
-                      <td className="px-4 py-3">
-                        <code className="font-mono text-sm font-semibold text-gray-900 dark:text-white">
-                          {appointment.referenceNumber}
-                        </code>
-                      </td>
-                      <td className="px-4 py-3">
-                        <p className="text-sm font-medium text-gray-900 dark:text-white">
-                          {formatFullName(appointment.firstName, appointment.lastName)}
-                        </p>
-                        <p className="text-sm text-gray-500 dark:text-gray-400">
-                          {appointment.purposeLabel ?? "—"}
-                        </p>
-                      </td>
-                      <td className="px-4 py-3">
-                        <p className="text-sm text-gray-900 dark:text-white">
-                          {appointment.hostName}
-                        </p>
-                        <p className="text-sm text-gray-500 dark:text-gray-400">
-                          {appointment.hostDepartment}
-                        </p>
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
-                        {formatDateTime(appointment.scheduledFor)}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        {!appointment.open ? (
-                          <span className="inline-flex rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600 dark:bg-gray-700 dark:text-gray-300">
-                            {closedLabel(appointment)}
-                          </span>
-                        ) : cancellingRef === appointment.referenceNumber ? (
-                          <span className="inline-flex items-center gap-2">
-                            <span className="text-sm text-gray-500 dark:text-gray-400">
-                              Cancel this?
-                            </span>
-                            <button
-                              type="button"
-                              disabled={pendingRef !== null}
-                              onClick={() =>
-                                void confirmCancel(appointment.referenceNumber)
-                              }
-                              className="rounded-lg border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-semibold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300"
-                            >
-                              {pendingRef === appointment.referenceNumber
-                                ? "Cancelling…"
-                                : "Yes, cancel"}
-                            </button>
-                            <button
-                              type="button"
-                              disabled={pendingRef !== null}
-                              onClick={() => setCancellingRef(null)}
-                              className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
-                            >
-                              Keep
-                            </button>
-                          </span>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setCancellingRef(appointment.referenceNumber)
-                            }
-                            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:border-gray-400 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
-                          >
-                            Cancel
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   );
 }

@@ -1,3 +1,5 @@
+import { logger } from "@/lib/logger";
+import { withApi } from "@/lib/api";
 import { NextResponse } from "next/server";
 
 import { getSession } from "@/lib/session";
@@ -9,7 +11,7 @@ import { markVisitReturned } from "@/lib/visits";
  * Resumes the same Visit: status back to ACTIVE and `exitTime` cleared. No new
  * visit is created, so the day still reads as one visit in history.
  */
-export async function POST(
+async function POSTHandler(
   _request: Request,
   context: RouteContext<"/api/visits/[id]/return">,
 ) {
@@ -46,10 +48,12 @@ export async function POST(
 
     return NextResponse.json({ id, status: "ACTIVE" });
   } catch (error) {
-    console.error(`POST /api/visits/${id}/return failed`, error);
+    logger.error(`POST /api/visits/${id}/return failed`, error);
     return NextResponse.json(
       { error: "Failed to mark this visitor as returned." },
       { status: 500 },
     );
   }
 }
+
+export const POST = withApi(POSTHandler);

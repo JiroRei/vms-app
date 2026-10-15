@@ -92,7 +92,7 @@ export type IssueCodeResult =
   | {
       status: "issued";
       /** Set only when a profile exists — the caller sends it. */
-      delivery: { code: string; firstName: string } | null;
+      delivery: { code: string; firstName: string; expiresAt: Date } | null;
     };
 
 /**
@@ -147,7 +147,7 @@ export async function issueVerificationCode(
 
   return {
     status: "issued",
-    delivery: profile ? { code, firstName: profile.firstName } : null,
+    delivery: profile ? { code, firstName: profile.firstName, expiresAt: new Date(now.getTime() + CODE_TTL_MS) } : null,
   };
 }
 

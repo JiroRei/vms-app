@@ -25,10 +25,14 @@ const REGION_ID = "qr-scanner-region";
 export function QrScanner({
   onScan,
   active = true,
+  unavailableMessage = "No camera available. Use the reference number below instead.",
+  scanHint = "Hold the QR code from your invitation up to the camera.",
 }: {
   onScan: (value: string) => void;
   /** Set false to release the camera — e.g. while a confirmation step is up. */
   active?: boolean;
+  unavailableMessage?: string;
+  scanHint?: string;
 }) {
   const [status, setStatus] = useState<Status>("starting");
 
@@ -50,6 +54,13 @@ export function QrScanner({
     let cancelled = false;
     // The camera decodes continuously; the parent only wants the first read.
     let handled = false;
+
+    async function releaseCamera() {
+      if (!scanner) return;
+      // The library can throw synchronously when start is pending or no camera exists.
+      try { if (scanner.isScanning) await scanner.stop(); } catch {}
+      try { scanner.clear(); } catch {}
+    }
 
     async function start() {
       try {
@@ -73,7 +84,7 @@ export function QrScanner({
           () => {},
         );
 
-        if (cancelled) return;
+        if (cancelled) { await releaseCamera(); return; }
         setStatus("scanning");
       } catch {
         if (cancelled) return;
@@ -86,12 +97,7 @@ export function QrScanner({
     return () => {
       cancelled = true;
 
-      // `stop()` rejects when the camera never started, which is exactly the
-      // case this cleanup also has to handle.
-      scanner
-        ?.stop()
-        .catch(() => {})
-        .finally(() => scanner?.clear());
+      void releaseCamera();
     };
   }, [active]);
 
@@ -107,14 +113,14 @@ export function QrScanner({
           <p className="px-4 py-8 text-center text-sm text-gray-300">
             {status === "starting"
               ? "Starting the camera…"
-              : "No camera available. Use the reference number below instead."}
+              : unavailableMessage}
           </p>
         )}
       </div>
 
       {status === "scanning" && (
         <p className="text-center text-sm text-gray-500 dark:text-gray-400">
-          Hold the QR code from your invitation up to the camera.
+          {scanHint}
         </p>
       )}
     </div>
