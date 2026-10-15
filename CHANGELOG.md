@@ -6,6 +6,343 @@ For the current state of the project rather than its history, see
 
 ---
 
+## 2026-10-14 — Tailwind CSS parse failure
+
+- Fixed "Parsing CSS source code failed" in `src/app/globals.css`. Tailwind's
+  automatic source detection scanned Turbopack's binary cache
+  (`<distDir>/cache/turbopack/*.sst`) inside a build directory created with
+  `NEXT_DIST_DIR` that `.gitignore` did not cover, and emitted byte sequences
+  such as `[-:\1 G…Q]` and `[app-:…]` as utility classes.
+- `globals.css` now uses `@import "tailwindcss" source(none)` with explicit
+  `@source` entries for `src/app`, `src/components` and `src/lib`, and excludes
+  `src/generated`.
+- `.gitignore` ignores every build directory (`/.next*/`) instead of only
+  `.next` and `.next-e2e`.
+- Verified: compiled CSS lost only four unused false-positive utilities
+  (`static`, `shadow`, `outline`, `table-header-group`, picked up from words in
+  Markdown); before/after screenshots of the kiosk landing page, dashboard and
+  booking page are pixel-identical; dev server, production build and all 11
+  Playwright tests pass.
+
+## 2026-10-13 — Dashboard summary cards
+
+- Added five dashboard stat cards — on site now, out returning, visitors today,
+  deliveries today and still expected — above the live list, each linking to the
+  list, history or appointments it counts.
+- Added the staff-only `GET /api/dashboard/stats` snapshot, polled every five
+  seconds with skeleton placeholders and a quiet error state.
+- Counts use the building's calendar day and close stale visits before reading;
+  deliveries are excluded from the on-site figure.
+- Added four query tests covering status separation, the midnight boundary,
+  cancelled appointments and stale-visit closing.
+
+## 2026-10-13 — Emergency roll-call
+
+- Added guard/admin roll-call with stale-visit closing, separate on-site and
+  expected-back lists, destination/name sorting and 15-second refreshes.
+- Added local session-storage ticks, accounted-for counts and Clear ticks.
+- Reused the daily-register print table with A4 portrait, empty printed
+  checkbox squares, headcounts and staff/time attribution.
+- Added a red dashboard header entry and navigation link.
+- Added two query tests and guard/admin browser tests. Native Chrome preview
+  remains pending; Chromium PDF pages were rendered and inspected.
+- Follow-up verification passed the complete 11-test Playwright suite together.
+  Its isolated fixtures were removed afterward, and the development audit found
+  no test data.
+
+## 2026-10-13 — Dashboard visual polish
+
+**Status:** changes in the working tree
+
+### Changed
+
+- Refined the dashboard shell with organization branding, quieter surfaces,
+  clearer account controls and responsive navigation that scrolls cleanly on
+  small screens.
+- Made the active navigation item follow the current route and kept admin
+  destinations scoped to administrators in the navigation.
+- Standardized keyboard focus visibility and dark mode color-scheme behavior,
+  and aligned primary dashboard actions with the teal accent.
+- Preserved the print layout and current page workflows.
+
+## 2026-10-13 — Deferred work, deployment settings and operations documentation
+
+**Status:** changes in the working tree
+
+### Added and changed
+
+- Added public per-deployment organization name, site time zone and optional
+  time-zone label settings. The kiosk header, metadata and printable register
+  now share the configured organization name; remaining dashboard timestamp
+  displays use the configured time zone.
+- Added optional host arrival email contacts and notifications after walk-in,
+  visitor-pass and appointment check-in. Notification failure does not undo the
+  visit.
+- Added staff password recovery pages and Better Auth reset email delivery.
+  Responses do not reveal whether an account exists, reset links expire after
+  one hour, and successful resets revoke sessions.
+- Added public booking rate limiting, host/time slot conflict prevention,
+  case-insensitive purpose label uniqueness, and optional host email migration.
+- Mapped Postgres partial-index conflicts reliably during rescheduling and
+  added regression coverage for a reschedule into an occupied host slot.
+- Selected separate deployments and databases per organization. Updated the
+  tenancy plan and continuation checklist to distinguish implemented work from
+  future shared-database migration and environment-specific setup.
+- Corrected the host directory column order and documented added pages,
+  notifications, settings, migration and remaining verification.
+
+### Verification
+
+- Applied the latest schema migration to isolated `vms_test` and regenerated
+  Prisma Client. Migration deploy reports all 20 migrations applied.
+- ESLint and TypeScript passed. The zero-byte raw-data `src/test.ts` remains
+  untouched and excluded by `tsconfig.json`.
+- All 90 tests across 9 modules passed when run individually outside the
+  sandbox. Inside-sandbox test startup is blocked by esbuild child-process
+  `EPERM`.
+- Reporting, visitor-pass booking, and password-reset HTTP verification passed
+  against the local server; each script removed its temporary records.
+- The production build and local password recovery HTTP check were completed
+  in the follow-up run. Chrome print preview, Excel and real mail delivery
+  remain pending; see [CONTINUATION.md](./CONTINUATION.md).
+
+## 2026-10-13 — Notification copy, test repairs and project docs
+
+**Status:** changes in the working tree
+
+### Changed
+
+- Corrected appointment check-in success messages: reception can see the
+  arrival, while staff are asked to notify the host. The copy no longer claims
+  an actual host notification was sent.
+- Repaired appointment, visit, staff and stale-visit tests and shared fixtures
+  for the current Prisma schema and time-zone behavior. Added a guard against
+  running destructive test setup against a non-test database.
+- Updated package scripts to pass the Prisma 7 config and added typecheck,
+  migration and HTTP verification commands.
+- Rewrote the setup and status docs, added a continuation checklist, and
+  refreshed the reporting and visitor-pass verification notes.
+
+### Verification state
+
+- Test migration completed successfully against `vms_test`; 19 migrations
+  applied and none pending.
+- ESLint passed, and TypeScript passed after excluding an untracked raw-data
+  file at `src/test.ts` (zero characters); the file itself was left untouched.
+- All 87 tests across 9 modules passed when each module was run directly. The
+  aggregate test runner cannot spawn workers in the sandbox (`EPERM`); the npm
+  launcher also encountered a local NVM script trust error during a retry.
+- Production build and interactive browser/Excel checks remain pending.
+
+---
+
+## 2026-10-12 — Visitor passes and express check-in
+
+**Status:** complete · **uncommitted** on `staging`
+**Scope:** schema + migration `20261012090000_visitor_passes`, new
+`src/lib/pass-token.ts` (portable) and `src/lib/visitor-pass.ts`, pass routes,
+`/dashboard/visitors`, "My pass" on the manage page, `AppointmentCheckIn`,
+`docs/visitor-pass.md`.
+
+### Added
+
+- **`VisitorPass`** (version, ACTIVE/REVOKED, RECURRING_AUTO/STAFF_ISSUED,
+  issued/expires/last used, revoked by). At most one ACTIVE per profile via a
+  partial unique index (raw SQL; Prisma's drift check ignores it).
+- **`Visit.visitorProfileId`** and **`Visit.checkInMethod`**
+  (`WALK_IN | APPOINTMENT | DELIVERY | PASS`, new — there was no method field;
+  null on legacy visits the backfill could not classify).
+  **`VisitorProfile.recurringSince`.** Backfill links appointment-redeemed
+  visits to their appointment's profile.
+- **Pass tokens** `vp1.<passId>.<mac>`, HMAC-SHA256 over prefix + id +
+  version with the new `PASS_SECRET`; never stored, re-rendered on demand,
+  rotated by bumping the version. `src/lib/pass-token.ts` imports only
+  `node:crypto` and `qrcode`. `verifyPassToken(token, secret, version)` takes
+  the version as a third argument, since it lives in the database. 15 unit
+  tests: `npm run test:pass-token`.
+- **Automatic issuance** after every profile-linked check-in once the profile
+  has 3 linked visits in 30 days, emailed with the QR inline ("Show this at the
+  kiosk or gate to check in faster."). A pass revoked by staff is not
+  re-issued automatically.
+- **Express check-in**: the kiosk and the guard scanner accept passes ("Scan
+  your appointment QR or visitor pass"). One appointment in the window →
+  "Is this you?"; several → picker; none → "No appointment today" with the name
+  prefilled and "Same as last time" cards, created through `createWalkInVisit()`.
+  Pass check-ins are recorded as PASS, linked to the profile, and renew the
+  pass. Invalid, revoked, expired and replaced passes all show "This pass is no
+  longer valid. Please ask the guard for help."
+- **`/dashboard/visitors`**: search, visit count, recurring since, pass status;
+  Issue pass, Revoke, Rotate and resend.
+- **"My pass"** on `/appointment-booking/manage`, signed-in visitors only (not
+  via appointment email links): QR, download, "Replace my pass".
+- **`docs/visitor-pass.md`**: the mechanism for reuse as a membership feature.
+
+### Notes
+
+- Only **profile-linked** visits count toward the threshold: appointments
+  booked by a new email + name pair or after code verification, and pass
+  check-ins. An unverified booking under an existing pair stays unlinked by
+  design, so its visit does not count.
+
+### Verified
+
+Scripted end-to-end against the dev server (test rows deleted after): third
+linked visit issues exactly one pass and the email; kiosk and guard scans with
+one, several and no appointments; recurring count 3 APPOINTMENT + 3 PASS;
+rotated (holder and staff), revoked, expired and tampered passes refused with
+the exact message; manage-page QR identical across renders and equal to an
+independently derived token; a pass cannot redeem another person's
+appointment; the database refuses a second ACTIVE pass; every name in
+`docs/visitor-pass.md` exists.
+
+---
+
+## 2026-10-12 — Appointment self-service, staff actions, clearer scan messages
+
+**Status:** complete · **uncommitted** on `staging`
+**Scope:** schema + migration `20261012060000_appointment_self_service`,
+`src/lib/{appointments,qr,email,booking-config}.ts`, new
+`src/lib/{appointment-access,appointment-notify,appointment-responses,ics}.ts`,
+appointment routes, `/appointment-booking/manage`, `/dashboard/appointments`,
+dashboard nav, `AppointmentCheckIn`.
+
+### Added
+
+- **Schema.** `Appointment.cancelledAt / cancelledBy (VISITOR|STAFF) /
+  cancelReason`; `Appointment.visitId` (unique) linking the visit a check-in
+  created; `AppointmentEvent` (type, actorType, actorUserId, JSON `detail` with
+  old/new values). Every existing appointment gets a backfilled SYSTEM CREATED
+  entry. `CHECK_IN_EARLY_MINUTES = 60` in `booking-config.ts`.
+- **Visitor self-service** at `/appointment-booking/manage`, by signed manage
+  link (one appointment, valid until `expiresAt`, revoked by Regenerate QR) or
+  emailed-code sign-in (lists all of theirs, with sign-out). Large QR, reference,
+  .ics download, reschedule with the booking slot picker and `checkSlot()`,
+  cancel with confirm. The booking confirmation screen links there too.
+- **Staff expected-arrivals view** at `/dashboard/appointments`: Today and
+  Upcoming (14 days) tabs, search, status badges, one-click check-in,
+  reschedule, cancel, Regenerate QR, expandable event log. Second in the nav,
+  with today's count, and now in the mobile header too.
+- **Emails:** "Appointment updated", "new QR code" and "Appointment cancelled";
+  every confirmation/update carries the manage link. Email times are now in the
+  building's zone (they used the server's).
+
+### Changed
+
+- **Check-in window.** Codes are refused on the wrong day and more than 60
+  minutes early. Previously any PENDING code worked at any time before
+  `expiresAt`. Applies to the kiosk, the scanner and staff one-click alike.
+- **Refusal messages** name the times: too early ("...today at 3:00 PM. Check-in
+  opens at 2:00 PM."), wrong day (actual date and time), cancelled, expired,
+  and already used (with the check-in time). The kiosk adds "Ask the guard for
+  help." `APPOINTMENT_FAILURE_MESSAGE` is replaced by
+  `describeAppointmentFailure()`.
+- **Creation and check-in are logged** (CREATED, CHECKED_IN) with their actor.
+
+### Verified
+
+End-to-end against the dev server (scripted; test rows deleted after): a
+reschedule keeps the original QR, which then validates with the new time;
+cancelled codes are refused at kiosk and staff check-in; Regenerate QR kills the
+old code and old manage links; staff one-click creates a linked visit with
+`checkedInBy` and a CHECKED_IN entry; too-early and wrong-day messages; tampered,
+cross-appointment and expired manage tokens rejected; each change logged with
+the right actor.
+
+---
+
+## 2026-10-12 — Automatic stale-visit closing
+
+**Status:** complete · **uncommitted** on `staging`
+**Scope:** `src/lib/stale-visits.ts`, new `src/lib/site-config.ts`, schema +
+migration `20261012013401_auto_close_stale_visits`, history table, visit
+timeline, cron route, new `prisma/repair-auto-closed-visits.ts`.
+
+### Changed
+
+- **Stale visits close automatically.** `getActiveVisits()` and
+  `getVisitHistory()` run the cleanup first, throttled to once a minute per
+  server process, so yesterday's visitors never show as on site with or
+  without a scheduler. The button and the scheduler endpoint call the same
+  `closeStaleVisits()`.
+- **Closing time is computed per visit, in the building's time zone.** An
+  `ACTIVE` visit closes at `AUTO_CLOSE_TIME` (`"23:59"` → 23:59:59.999) on its
+  check-in day in `SITE_TIMEZONE`, rolling to the next occurrence if that is
+  before the check-in (overnight sites). A `PENDING_RETURN` visit still closes at
+  its `exitTime`. Day boundaries used the server's local time before; they now
+  use `SITE_TIMEZONE`, which moved from `booking-config.ts` into the new
+  `site-config.ts` that both import.
+- **Cron route renamed** `POST /api/cron/close-stale` →
+  `POST /api/cron/close-stale-visits` (same Bearer `CRON_SECRET` check; nothing
+  called the old path). `.env` and `.env.example` now carry a generated dev
+  `CRON_SECRET`.
+- **Honest labels.** New `Visit.closedAutomatically` flag and `AUTO_CLOSE`
+  event type. History shows "Auto-closed · time on site —" with the closing time
+  instead of a duration; the timeline reads "11:59 PM — Auto-closed (departure
+  not recorded)". "Closed automatically" was previously inferred from a null
+  `checkedOutByName`, which also matched every checkout from before attribution
+  existed; those now show no attribution line.
+
+### Fixed
+
+- **Old auto-closed visits.** `npm run db:repair-auto-closed` flagged 25 visits,
+  moved 1 closing time back to its check-in day (the Sep 17 visit: Sep 21
+  4:10 PM → Sep 17 11:59:59 PM), converted 13 `CHECK_OUT` events to
+  `AUTO_CLOSE` and added 12. Idempotent; run it once per environment.
+
+### Not done
+
+- `tests/stale-visits.test.ts` still asserts the old `endOfLocalDay()` rule; the
+  suite as a whole is already stale (STATUS.md gap 15).
+
+---
+
+## 2026-10-09 — Autofill off everywhere; post-merge fixes for History and Hosts
+
+**Status:** complete · **uncommitted** on `staging`
+**Scope:** every form control in the app, `src/lib/hosts.ts`, `src/lib/visits.ts`,
+`src/app/dashboard/history/page.tsx`.
+
+### Changed
+
+- **Browser autofill suggestions are off in every form.** Every `<input>`,
+  `<select>` and `<textarea>` now carries `autoComplete="off"`, replacing the
+  `email`, `tel`, `given-name`, `family-name`, `one-time-code`,
+  `current-password` and `new-password` hints. This settles the open kiosk
+  decision from the merge (Clark's `off` wins): a shared tablet must never
+  suggest the previous visitor's details. `NameFields` no longer takes a
+  per-field hint. Files: booking form, returning-visitor lookup, walk-in,
+  login, change password, appointments, history filters, hosts, log delivery,
+  purpose options, staff, `name-fields.tsx`.
+  - Caveat: Chrome and Edge ignore `autocomplete="off"` on password fields, so
+    the browser's password manager can still offer saved passwords on the login
+    and change-password forms.
+
+### Fixed
+
+- **History and Hosts crashed with `PrismaClientValidationError: Unknown
+  argument 'used'`.** `listHosts()` and `updateHost()` counted open
+  appointments with `used: false`, a field the revamp replaced with
+  `AppointmentStatus`. Now `status: "PENDING"`, the same "still redeemable"
+  rule as `src/lib/appointments.ts`. Both pages call `listHosts()` (History
+  for its host filter).
+- **History empty state showed raw source text.** The merge left the
+  `filtered ? (…)` branch outside JSX braces with its comment as `//` text and
+  dropped the "No visit history yet" branch, so an empty result printed
+  `// An empty log…` and `filtered ? (` on the page. Braces and the missing
+  branch restored from `b64111a`.
+- **Typecheck error in `checkOutVisit()`.** `applyVisitTransition()` typed its
+  `data` as `VisitUpdateManyMutationInput`, which excludes the
+  `checkedOutById` foreign key. It is now `VisitUncheckedUpdateManyInput`. The
+  generated code already worked at runtime; only the type was wrong.
+
+### Verified
+
+`tsc --noEmit` is clean for `src/` and `eslint src` is clean. Prisma client
+regenerated; `prisma migrate status` is up to date. Not exercised in a browser.
+`tests/` still does not compile; see `STATUS.md`.
+
+---
+
 ## 2026-10-08 — Merge: revamp (`b64111a`) + `origin/staging` (clark_dev, PR #2)
 
 **Status:** merged on `staging`, verified locally, not yet pushed.
@@ -18,7 +355,7 @@ Full log of every conflict, decision and follow-up: [`git-merge.md`](./git-merge
 
 ## 2026-10-08 — Visitor names split into first and last
 
-**Status:** complete and verified · ⚠️ **uncommitted** on `staging`
+**Status:** complete and verified · **uncommitted** on `staging`
 **Scope:** `Visitor`, `Appointment`, `VisitorProfile`, `VisitorVerification`, every
 form that captures a visitor name, every surface that shows one, and the
 returning-visitor lookup.
@@ -80,7 +417,7 @@ dashboard and history: no hydration warnings. Test rows were deleted afterwards.
 
 ## 2026-10-08 — Stepped booking page, slot picker, returning-visitor lookup
 
-**Status:** complete and verified · ⚠️ **uncommitted** on `staging`
+**Status:** complete and verified · **uncommitted** on `staging`
 **Scope:** `/appointment-booking`, its API routes, and a `/privacy` placeholder.
 **Deliberately untouched:** the confirmation screen and QR/email flow, kiosk and
 walk-in, `Visit`/`Visitor`, rescheduling and cancellation, double-booking.
@@ -129,7 +466,7 @@ afterwards.
 ## 2026-09-22 (second pass) — Tests, and the lapses the audit had been listing
 
 **Status:** complete · typecheck, lint, production build and **54 tests** pass ·
-⚠️ **uncommitted** on `clark_dev`
+**uncommitted** on `clark_dev`
 
 The backlog had been accumulating known-but-unfixed items for three sessions.
 This clears everything that is not blocked on infrastructure, and says plainly
@@ -188,7 +525,7 @@ buildable from here:
 ## 2026-09-22 — A database at last; appointments and hosts become manageable
 
 **Status:** complete · typecheck, lint and production build pass · **verified
-end to end against a running server** · ⚠️ **uncommitted** on `clark_dev`
+end to end against a running server** · **uncommitted** on `clark_dev`
 **Scope:** an isolated dev database, the two red lapses from yesterday's audit,
 and the two modules that were keeping the system from closing its own loop.
 
@@ -291,9 +628,9 @@ password.
 ## 2026-09-21 — Better Auth switched on, rate limiting, theme flash
 
 **Status:** code complete · typecheck, lint and production build pass ·
-❌ **nothing verified against a database** — `.env` still holds the literal
+**nothing verified against a database** — `.env` still holds the literal
 `YOUR_PASSWORD`, so the migration is unapplied, the seed has not run and no one
-has signed in · ⚠️ **uncommitted** on `clark_dev`
+has signed in · **uncommitted** on `clark_dev`
 **Scope:** authentication, the endpoints that take unauthenticated input, and
 one theme bug found while auditing.
 **Deliberately untouched:** the visit lifecycle, the shape of every visit API
@@ -372,7 +709,7 @@ plaintext and handed out an unsigned JSON cookie that anyone could forge into an
 ## 2026-09-18 — Kiosk hardening, shared formatting, docs
 
 **Status:** complete · typecheck, lint and production build pass ·
-⚠️ **uncommitted** on `clark_dev`
+**uncommitted** on `clark_dev`
 **Scope:** presentation, kiosk form behaviour and documentation.
 **Deliberately untouched:** the visit lifecycle, every API route, the Prisma
 schema, and `src/lib/{visits,history,appointments,stale-visits}.ts` query logic.
@@ -460,7 +797,7 @@ redirecting to `/login`.
 
 ## 2026-09-16 — Purpose becomes an admin-managed dropdown
 
-**Status:** complete and verified · ⚠️ **uncommitted** on `devspace`
+**Status:** complete and verified · **uncommitted** on `devspace`
 **Scope:** the purpose field only — schema, both forms, every display surface,
 and an admin screen to manage the list.
 **Deliberately untouched:** QR/email booking logic, the identity refactor, the
@@ -534,7 +871,7 @@ is now a lookup table an admin curates.
 
 ## 2026-09-16 — Fix: hydration mismatch on the booking date picker
 
-**Status:** complete and verified · ⚠️ **uncommitted** on `devspace`
+**Status:** complete and verified · **uncommitted** on `devspace`
 **Scope:** the rendering path only. No change to booking logic, validation or
 the appointment API.
 
@@ -577,7 +914,7 @@ attributes and a hydration mismatch.
 
 ## 2026-09-16 — QR appointment booking, email delivery, and scanning
 
-**Status:** complete and verified · ⚠️ **uncommitted** on `devspace`
+**Status:** complete and verified · **uncommitted** on `devspace`
 **Scope:** booking a visit, getting a QR code for it, and redeeming that code at
 either surface. The reference-number path is kept as the fallback throughout.
 **Deliberately untouched:** walk-in flow, delivery logging, the checkout
@@ -667,7 +1004,7 @@ or from a guard's phone.
 
 ## 2026-09-16 — Per-visit event log + expandable timelines
 
-**Status:** complete and verified · ⚠️ **uncommitted** on `devspace`
+**Status:** complete and verified · **uncommitted** on `devspace`
 **Scope:** one visit's own event history. Purely additive — no existing
 check-in, check-out, step-out or return behavior changed.
 **Deliberately untouched:** cross-visit and per-visitor-identity history, which
@@ -733,7 +1070,7 @@ it is opened.
 
 ## 2026-09-16 — Guard-side delivery logging + dashboard ergonomics
 
-**Status:** complete and verified · ⚠️ **uncommitted** on `devspace`
+**Status:** complete and verified · **uncommitted** on `devspace`
 **Scope:** where a delivery is logged, and how the guard dashboard feels to use.
 **Deliberately untouched:** appointment flow, group appointments, the return-later
 checkout state, visitor identity tracking. Roles still get the same dashboard
@@ -815,7 +1152,7 @@ moment it is written.
 
 ## 2026-09-15 — "Will you return today?" checkout flow
 
-**Status:** complete and verified · ⚠️ **uncommitted** on `devspace`
+**Status:** complete and verified · **uncommitted** on `devspace`
 **Scope:** one visit's lifecycle within a single day. No visitor identity
 tracking or cross-visit matching.
 **Deliberately untouched:** appointment flow, delivery flow, group appointments.

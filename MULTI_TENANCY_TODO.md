@@ -1,57 +1,83 @@
-# Multi-tenancy checklist
+# Organization isolation and tenancy
 
-This system currently supports **a single organization**. Multi-tenancy is a
-planned future phase, and everything built before it arrives is implicitly
-global — one shared list of hosts, one shared list of purposes, one shared pool
-of visits.
+## Chosen deployment model
 
-This file is the running list of exactly where that assumption is baked in, so
-none of it has to be rediscovered by reading the whole codebase when the work
-starts. **Add an entry here whenever you build something that is not
-tenant-scoped**, and pair it with a `TODO(multi-tenancy):` comment at the site
-itself so the two can be cross-checked.
+Organizations use **separate deployments and separate PostgreSQL databases**.
+This keeps each organization's hosts, visits, bookings, staff, visitor passes,
+export audit and rate-limit state physically separate without adding an
+organization discriminator to every query.
 
-Find every marker in the code with:
+Each deployment has its own secrets, mail credentials, origin, database URL,
+organization display name and site time zone. Set the public display values in
+`.env` before building because Next.js embeds `NEXT_PUBLIC_*` variables in
+the client bundle. See `.env.example`.
 
-```bash
-grep -rn "TODO(multi-tenancy)" src prisma --include="*.ts" --include="*.tsx" --include="*.prisma"
+The current build still uses generic defaults:
+`Visitor Management System`, `Asia/Manila`. This is suitable for local
+development, not a configured customer deployment.
+
+## Per-deployment checklist
+
+- [ ] Keep `KioskDevice`, `EmailOutbox` and `RateLimitBucket` data deployment-local. In a shared database, add organization ownership and scope heartbeat upserts, status lists, cron sweeps, email logs/retries, and counter keys to it.
+- [ ] Make `PUBLIC_BOOKING_EMAIL_LIMIT`, `PUBLIC_BOOKING_IP_LIMIT`, `VERIFICATION_IP_LIMIT` and `KIOSK_HEARTBEAT_IP_LIMIT` in `booking-config.ts` organization-specific; define whether IP quotas are per organization or shared across the installation.
+
+- [ ] Provision a unique database and restrict database credentials to that
+  deployment.
+- [ ] Set a real `NEXT_PUBLIC_ORGANIZATION_NAME`,
+  `NEXT_PUBLIC_SITE_TIMEZONE`, and optional
+  `NEXT_PUBLIC_SITE_TIMEZONE_LABEL` before build.
+- [ ] Generate distinct `BETTER_AUTH_SECRET`, `BOOKING_VERIFY_SECRET`,
+  `PASS_SECRET`, and `CRON_SECRET` values for each deployment.
+- [ ] Configure a verified application origin, HTTPS, mail sender and
+  organization privacy details.
+- [ ] Keep production credentials and visitor data out of shared development
+  fixtures and logs.
+
+`ExportLog` and `ORGANIZATION_NAME` remain relevant isolation points: their
+data and display are deployment-local today. If a future product needs several
+organizations in one running app or database, complete the shared-database
+migration below before enabling that mode.
+
+## Shared-database SaaS migration (not implemented)
+
+A future shared application must add an `Organization` model and enforce
+tenant ownership for all tenant data, including `ExportLog`, `PurposeOption`,
+`Host`, `Visitor`, `Visit`, `VisitEvent`, `Appointment`,
+`AppointmentEvent`, `VisitorProfile`, `VisitorPass`, and
+`VisitorVerification`. Staff users need an organization membership and every
+authorization check must derive the organization from the authenticated
+session. Public routes need an explicit, trusted host-to-organization resolver.
+
+That migration must also:
+
+- Scope history queries, CSV cursor batches, stale-visit sweeps, booking,
+  appointment lookup/check-in, visitor profile/pass lookup, staff lists and
+  admin actions by the same organization.
+- Add composite constraints so a visit cannot point to another organization's
+  visitor or profile, an appointment cannot point to another organization's
+  host or purpose, and a pass cannot belong to another organization's profile.
+- Move organization name, time zone, auto-close time, booking hours,
+  appointment windows, upcoming horizon, purpose settings, pass thresholds and
+  retention settings into organization records.
+- Use organization-scoped rate limits and secrets, including visitor pass and
+  appointment-manage signing keys. Plan pass-secret rotation without
+  invalidating every organization's passes at once.
+- Migrate existing rows to a known default organization, audit uniqueness and
+  cross-record references, then test cross-organization access denial for every
+  public and staff route before onboarding a second tenant.
+- Preserve export audit history and retain the exporter's user identifier when
+  staff accounts are removed.
+
+Never treat a UI selector or hidden navigation link as tenant authorization.
+The database query and server-side role check must both enforce organization
+ownership.
+
+## Markers in the current code
+
+`TODO(multi-tenancy)` comments mark deployment-global settings and shared
+queries that need revisiting if the chosen separate-deployment model changes.
+Find them with:
+
+```powershell
+rg -n "TODO\(multi-tenancy\)" src prisma
 ```
-
-(Scoped to `src` and `prisma` deliberately — pointing it at `.` walks
-`node_modules` and appears to hang.)
-
----
-
-## Outstanding
-
-- **PurposeOption**: currently global/shared across the whole app. Needs
-  `organizationId` added and every query (admin CRUD, kiosk dropdown, booking
-  dropdown) scoped by it before onboarding a second real client.
-
-  Specifics worth knowing before that work starts:
-  - `label` is `@unique` globally. That has to become unique *per organization*,
-    or the second client to want a "Meeting" option is refused one.
-  - `src/lib/purposes.ts` holds every read and write. Scoping starts there.
-  - `/dashboard/settings/purposes` lists and edits the whole table; an admin can
-    currently rename or hide an option another organization depends on.
-  - `POST /api/purposes`, `PATCH /api/purposes/[id]` and
-    `POST /api/purposes/[id]/move` all act on the global list. The move endpoint
-    renumbers **every** row, so one organization reordering its list would
-    rewrite everyone's.
-  - `prisma/seed.ts` seeds one default set. Each new organization will need its
-    own copy.
-
----
-
-## Also global, and not yet marked in code
-
-Not part of the purpose work, but the same assumption applies. Listed here so
-the checklist is honest about scope rather than looking complete:
-
-- **Host** — one shared list behind every host dropdown and the history filter.
-- **Visit / Visitor / VisitEvent** — no tenant column, so the dashboard's live
-  list, history and stale-visit cleanup all read across everything.
-- **Appointment** — booking, QR validation and check-in are all unscoped; a
-  reference number or `qrToken` is globally unique rather than per-organization.
-- **User / Role** — `ADMIN` means admin of the whole system, not of an
-  organization.

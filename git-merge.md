@@ -8,7 +8,13 @@ management, tests, kiosk idle reset), 5 commits since merge base `e4f45f7`
 its data model, routes and flows. Clark's features that did not compete with it
 were kept and adapted to the revamp's model rather than dropped.
 
-28 files conflicted. All resolved; merge not yet committed or pushed.
+28 files conflicted. All were resolved. This section records the merge as it
+stood on 2026-10-08; it is a historical record, not the current repository
+status.
+
+The merge was subsequently committed as `7f7b295` on `staging`. Follow-up
+features and current verification are tracked in [STATUS.md](./STATUS.md),
+[CHANGELOG.md](./CHANGELOG.md), and [CONTINUATION.md](./CONTINUATION.md).
 
 ---
 
@@ -19,10 +25,10 @@ were kept and adapted to the revamp's model rather than dropped.
   required one (created earlier in `20260916131241_add_appointment_booking_and_qr`).
   Kept **required**. Clark's migration was edited to `ADD COLUMN IF NOT EXISTS` /
   `CREATE INDEX IF NOT EXISTS` — otherwise it fails on any database built from
-  this chain. ⚠️ On a database where Clark already applied it, `prisma migrate
+  this chain. On a database where Clark already applied it, `prisma migrate
   dev` will report the migration as modified (checksum change); the SQL is
   equivalent, so `prisma migrate resolve` or a dev reset is the fix there.
-- **Two `User` ↔ `Visit` relations** (revamp's `checkedInBy`, Clark's
+- **Two `User` and `Visit` relations** (revamp's `checkedInBy`, Clark's
   `checkedOutBy`) now named `VisitCheckedInBy` / `VisitCheckedOutBy`.
   Schema-only; no SQL change.
 - **Appointment indexes:** union of both sides.
@@ -40,7 +46,7 @@ were kept and adapted to the revamp's model rather than dropped.
   deliveries, visit events, dashboard page, purpose settings, `api-auth.ts`.
 - `.env.example`: Clark's `BETTER_AUTH_SECRET` / `BETTER_AUTH_URL` /
   `CRON_SECRET` + the revamp's Resend and `BOOKING_VERIFY_SECRET`.
-  ⚠️ Local `.env` needs a `BETTER_AUTH_SECRET` before the app will start, and
+  Local `.env` needs a `BETTER_AUTH_SECRET` before the app will start, and
   the seed must be re-run (`npm run db:seed`) after `drop_user_password` so
   staff logins exist again.
 
@@ -79,10 +85,9 @@ Both sides owned `POST /api/appointments` with incompatible meanings.
 - Walk-in form rebuilt from both: revamp's `NameFields` + purpose dropdown,
   Clark's shared styles, clear-on-edit errors, focus-first-error, double-tap
   guard, and honest success copy (nothing notifies the host).
-- ⚠️ **Open decision:** Clark used `autocomplete="off"` on the kiosk name so a
-  shared tablet never suggests the previous visitor; the revamp's name-split
-  spec requires `given-name` / `family-name`. Revamp kept — revisit for the
-  kiosk.
+- ~~**Open decision:** kiosk name `autocomplete`.~~ **Resolved 2026-10-09:**
+  Clark's `off` wins, applied to every form control in the app (see
+  `CHANGELOG.md`).
 - Walk-in and booking routes now also reject **inactive hosts** (Clark's soft
   delete) server-side.
 
@@ -110,6 +115,17 @@ Both sides owned `POST /api/appointments` with incompatible meanings.
   (Clark's) regenerated lock-only so it includes the revamp's packages.
 - `CHANGELOG.md`: entries interleaved by date + a merge entry. `STATUS.md`:
   rewritten for the merged state.
+
+## Found after the merge (fixed 2026-10-09)
+
+- `src/lib/hosts.ts` still counted appointments with Clark's `used: false`,
+  so History and Hosts threw `PrismaClientValidationError`. Now
+  `status: "PENDING"`.
+- `src/app/dashboard/history/page.tsx`: the empty-state resolution lost its JSX
+  braces and the "No visit history yet" branch, so raw source text rendered on
+  an empty result. Restored.
+- `applyVisitTransition()` data type widened so `checkOutVisit()` can set
+  `checkedOutById` (typecheck only).
 
 ## Not done / follow-ups
 

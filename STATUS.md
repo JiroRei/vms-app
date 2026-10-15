@@ -1,492 +1,135 @@
 # VMS — Project Status
 
-A snapshot of where the Visitor Management System stands. Update this when the
-answer to "what works right now?" changes. For *what changed and when*, see
-[`CHANGELOG.md`](./CHANGELOG.md).
+Current project snapshot. See [CHANGELOG.md](./CHANGELOG.md) for dated changes and
+[CONTINUATION.md](./CONTINUATION.md) for the deferred work list. For a full
+project briefing (architecture, features, API surface, known issues, roadmap and
+deployment checklist) see [docs/PROJECT-HANDOFF.md](./docs/PROJECT-HANDOFF.md).
 
-**Last updated:** 2026-10-08 (merge of the revamp with `origin/staging`)
-**Branch:** `staging` — merge of `b64111a` (revamp) and `ea929f8` (PR #2, `clark_dev`); see [`git-merge.md`](./git-merge.md)
-**Last commit:** the merge commit on `staging` (not yet pushed)
-**Working tree:** clean after the merge commit
+The 2026-10-14 audit produced [docs/APP_MAP.md](./docs/APP_MAP.md) (routes,
+roles, models, settings, emails, jobs, flows and the measured access matrix),
+[docs/KNOWN_ISSUES.md](./docs/KNOWN_ISSUES.md) (prioritized findings and health
+check results) and [docs/screens/](./docs/screens/README.md) (screenshots; kept local and gitignored because they show real-looking personal details).
 
----
+## Conventions
 
-## Health checks
+- Update [docs/APP_MAP.md](./docs/APP_MAP.md) in the same change whenever a
+  page or API route, its access rule, a Prisma model or field, a setting or
+  environment variable, an email, a scheduled job, or a main flow is added,
+  removed or changed.
+- When a finding in [docs/KNOWN_ISSUES.md](./docs/KNOWN_ISSUES.md) is fixed,
+  remove it there and note the fix in [CHANGELOG.md](./CHANGELOG.md).
 
-| Check | Command | State |
-| --- | --- | --- |
-| Typecheck | `./node_modules/.bin/tsc --noEmit` | ✅ passing (2026-09-22) |
-| Lint | `npm run lint` | ✅ passing (2026-09-22) |
-| Production build | `npm run build` | ✅ passing (2026-09-22) |
-| Migrations | `npx prisma migrate status` | ✅ 7 applied (2026-09-22) against the dev cluster on **5433** |
-| Sign-in end to end | manual, via `curl` | ✅ verified (2026-09-22) — see below |
-| Appointment + host modules | manual, via `curl` | ✅ verified (2026-09-22) |
-| Automated tests | `npm test` | ✅ **54 passing** (2026-09-22) — visit lifecycle, appointments, staff, stale cleanup, rate limiter, formatters |
+**Updated:** 2026-10-13
+**Branch:** staging
+**Database:** local `vms` development schema `public`, automated tests in isolated schema `e2e` on PostgreSQL port 5432 (the older `vms_test` database is no longer used by the default runner)
+**Organization label:** generic `Visitor Management System` in `src/lib/site-config.ts`
+**Migrations:** 21 applied to development `public` and isolated `e2e` schemas
+**Working tree:** substantial existing uncommitted work; preserve it
 
-### What "verified" covered on 2026-09-22
+## Current verification
 
-Run against the dev cluster with the app on `localhost:3000`:
+Robustness work adds a health endpoint, kiosk monitoring, persistent email
+delivery/retries, structured logs and API errors, database-backed public limits,
+isolated Playwright tests, CI, and Postgres backup tooling. See
+[operations and testing](./docs/robustness.md).
+
+The backup command was attempted on 2026-10-13 and reported a skip because
+`pg_dump` is not installed/on PATH. No system packages were installed. A dump
+and scratch-schema restore/drop verification therefore remain unexecuted on
+this machine. Real deployments should rely on the database provider's managed
+backups with point-in-time recovery; local dumps are supplementary.
 
 | Check | Result |
 | --- | --- |
-| Sign in, correct password | 200, `better-auth.session_token`, `Max-Age=28800`, `HttpOnly` |
-| Sign in, wrong password | 401 |
-| `POST /api/auth/sign-up/email` | 400 `EMAIL_PASSWORD_SIGN_UP_DISABLED` |
-| Guard `POST /api/auth/update-user {"role":"ADMIN"}` | 400 `role is not allowed to be set`; role unchanged in the database |
-| 6+ sign-ins inside a minute | 429 after the 5th |
-| Guard → `POST /api/visits/close-stale` | 403 · admin → 200 |
-| No session → `GET /api/visits` | 401 |
-| Create appointment → redeem at kiosk → live list | reference generated, redeemed 201, visitor appears |
-| Cancel a redeemed appointment | 409 · cancel an unused one 200 · again 404 |
-| Guard → `POST /api/hosts` and `PATCH /api/hosts/[id]` | 403 both |
-| Deactivate a host | gone from the kiosk dropdown, still in the history filter |
-| Guard → `POST /api/staff`, `DELETE /api/staff/[id]` | 403 both |
-| Admin creates an account → that person signs in | 201 then 200 with the right role |
-| Duplicate email · password under 8 | 409 · 400 |
-| Admin demotes or deletes their own account | 409 both |
-| Change password: wrong current · correct | 400 · 200, old password then 401 and new 200 |
-| Remove an account | 200; its `account` and `session` rows cascade, none orphaned |
+| Migration deploy | 21 migrations applied to development `public` and isolated `e2e`; none pending |
+| Prisma client | Regenerated for the current schema |
+| Lint | Passed via the installed ESLint entry point |
+| TypeScript | Passed with `src/test.ts` excluded; it is an untracked raw-data file containing only zero characters |
+| Automated tests | 102 unit/service tests across 11 modules passed via `bun run test`; zero skips. Windows child-process sandbox restrictions required an approved outside-sandbox run |
+| End-to-end tests | All 11 Chromium Playwright tests passed together via `bun run test:e2e`, including the visitor workflows and both roll-call roles; zero feature skips |
+| Emergency roll-call | Guard/admin browser tests passed for access, ticks after refresh/reload/polling, clearing and print styles. Four-page A4 portrait PDFs visually checked; native Chrome preview unavailable |
+| HTTP robustness | Health 200 and simulated DB-failure 503, bounded heartbeat input, consistent API errors, email retry/expiry, persistent booking/lookup limits, kiosk alerts and admin controls verified |
+| Development isolation | Read-only audit found no E2E fixtures in development; all verification fixtures were removed from isolated `e2e` after the full browser suite |
+| Dev server | Restarted hidden on port 3000; `/api/health` returned 200 with database status `ok`; logs in gitignored `logs/` |
+| Earlier HTTP verification | Reporting, booking-pass and password-reset suites passed before this robustness work; their temporary fixtures were removed |
+| Production build | Passed; local build logs warnings because `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL` are not configured |
+| Excel and print preview | Manual export/print verification remains pending; application workflows are covered by Playwright |
 
----
+The complete current commands are in [README.md](./README.md). Reporting,
+booking-pass, and password-reset HTTP verification scripts are
+`npm run test:http:reporting`, `npm run test:http:booking-pass`, and
+`npm run test:http:password-reset`.
 
-## Stack
+## Working features
 
-| Layer | Choice | Version |
+- Public walk-in, appointment and staff-assisted visitor check-in; guard QR
+  scanning; logged deliveries; check-out, step-out and return tracking.
+- Stale visits close before live-list and history reads. An authenticated cron
+  endpoint is available for external scheduling.
+- Appointment self-service and staff management, event history, QR replacement,
+  visitor passes, and returning-visitor booking by scanned or pasted pass QR ID.
+  Returning visitors can switch to name and email verification.
+- Visitor pass emails use the persistent outbox with inline QR attachments.
+  Staff can queue the current QR without rotating its credential. Codes, reset
+  links and pass tokens are no longer printed in development logs.
+- Optional host arrival notices are sent after walk-in, pass and appointment
+  check-in. Password recovery uses Better Auth reset endpoints, generic
+  responses, one-hour links and session revocation.
+- Public appointment booking is rate-limited, and a partial unique index
+  prevents pending bookings for the same host and time. Purpose labels are
+  unique without case sensitivity.
+- Searchable history with shared name, date range, host and type filtering.
+  Admins can export all matching rows as a streamed CSV; guards do not see the
+  export action.
+- Printable daily register at `/dashboard/register`, available to guards and
+  admins. The dashboard and history page link to it.
+- The register uses the same generic organization name as the kiosk header,
+  site-time-zone day boundaries, a visit summary and print attribution. Its
+  reusable table component supports future printable pages.
+- Emergency roll-call at `/dashboard/roll-call` is available to guards and
+  admins from every dashboard header. Stale visits close before reading;
+  expected-back visitors have a separate headcount. Local ticks survive refresh,
+  and the shared print table uses A4 portrait with empty checkbox squares.
+- Business-facing interface and project documentation use text labels and SVG
+  icons without emoji.
+
+## Data and routes
+
+Prisma includes Better Auth models and `User`, `Host`, `Visitor`, `Visit`,
+`VisitEvent`, `Appointment`, `AppointmentEvent`, `PurposeOption`,
+`VisitorProfile`, `VisitorVerification`, `VisitorPass`, and `ExportLog`.
+The generated Prisma client is under `src/generated/prisma/`.
+
+| Route | Access | Description |
 | --- | --- | --- |
-| Framework | Next.js (App Router, Turbopack) | 16.3.4 |
-| UI | React | 19.2.8 |
-| Styling | Tailwind CSS | v4 (via `@tailwindcss/postcss`) |
-| ORM | Prisma (driver adapter, **no** bundled query engine) | 7.10.0 |
-| Database | PostgreSQL via `@prisma/adapter-pg` + `pg` | local `vms` @ **`localhost:5433`** |
-| Charts | Recharts | 3.10.1 |
-| QR generation | `qrcode` | 1.5.4 |
-| QR scanning | `html5-qrcode` (browser camera) | 2.3.8 |
-| Email | Resend | 6.28.1 |
-| Auth | Better Auth — **active** (email + password, scrypt, DB sessions) | 1.7.5 |
-| Package manager | Bun | 1.4.0 |
+| `/check-in` | Public | Visitor check-in chooser |
+| `/appointment-booking` | Public | New and returning visitor booking |
+| `/dashboard` | Staff | Live register, deliveries and today's register entry |
+| `/dashboard/history` | Staff | Filtered history, admin CSV export and register entry |
+| `/dashboard/register` | Staff | Daily printable visitor register |
+| `/dashboard/roll-call` | Staff | Emergency on-site and expected-back headcounts, local ticks and print |
+| `/dashboard/appointments` | Staff | Expected arrivals and appointment actions |
+| `/dashboard/visitors` | Staff | Visitor profile and pass actions |
+| `/dashboard/hosts`, `/dashboard/staff` | Admin | Directory and staff administration |
+| `GET /api/visits/export` | Admin | Streamed CSV export; other roles receive 403 |
+| `POST /api/booking/pass/verify` | Public | Validate a pass for booking prefill |
+| `POST /api/visitors/[profileId]/pass` | Staff | Issue, send, rotate or revoke a visitor pass |
 
-Prisma 7 specifics: the connection URL lives in `prisma7.config.ts`, **not** in
-`schema.prisma`. The generated client is written to `src/generated/prisma/` and
-is gitignored (regenerated by the `postinstall` script).
+See [docs/visit-reporting.md](./docs/visit-reporting.md) and
+[docs/visitor-pass.md](./docs/visitor-pass.md) and
+[docs/notifications-and-password-recovery.md](./docs/notifications-and-password-recovery.md)
+for implementation details.
+Each organization uses a separate deployment and database. The deployment
+checklist and future shared-database migration are tracked in
+[MULTI_TENANCY_TODO.md](./MULTI_TENANCY_TODO.md).
 
----
+## Known gaps
 
-## Module status
+Group bookings, complete identity linking across anonymous walk-ins and legacy
+delivery records, multi-instance rate limiting, and pass-secret rotation remain
+future product/infrastructure work. Production mail, secrets, origin/TLS,
+privacy details, and fixture credential rotation need environment-specific
+setup.
 
-Legend: ✅ done · 🟡 partial / temporary · ❌ not implemented · ⛔ removed
-
-| Module | State | Notes |
-| --- | --- | --- |
-| Kiosk — walk-in check-in | ✅ | Name, purpose, host. Public/unauthenticated by design. |
-| Public booking (`/appointment-booking`) | ✅ | Stepped form, slot picker (`src/lib/booking-config.ts`), returning-visitor lookup by email + first/last name with an emailed code, privacy consent. **Updated 2026-10-08.** |
-| Visitor names | ✅ | `firstName` / `lastName` everywhere a visitor is named; shared `NameFields`, `formatFullName()`, `makeNameKey()`. **New 2026-10-08.** |
-| QR generation + email | ✅ | `qrcode` + Resend, QR as an inline attachment. |
-| Kiosk — appointment check-in | ✅ | Camera QR scan, with reference-number entry as a visible fallback. Rate limited (lookup 30/min, redeem 20/min per terminal). |
-| Guard — QR scanning (`/dashboard/scan`) | ✅ | Same flow; stamps `Visit.checkedInBy`. |
-| Kiosk — delivery / courier | ⛔ | Removed 2026-09-16. Deliveries are logged by a guard on the dashboard. |
-| Kiosk — idle reset | ✅ | Warns at 45s, returns to `/check-in` at 60s. Mounted once in `src/app/check-in/layout.tsx`. |
-| Kiosk — form validation / error handling | ✅ | Field errors clear on edit, first invalid field is focused, submit is double-tap safe. |
-| Dashboard — live check-in list | ✅ | Polls every 5s, pauses on a backgrounded tab. A 401 sends the guard back to sign in. |
-| Dashboard — manual checkout | ✅ | Behind the "will they return?" prompt. Records who checked the visitor out. |
-| Dashboard — return-later flow | ✅ | `PENDING_RETURN` state + "Mark as returned". |
-| Dashboard — log delivery | ✅ | Modal on `/dashboard`; writes an already-closed visit attributed to the guard. |
-| Dashboard — stale visit cleanup | ✅ | Admin-only button, **plus** `POST /api/cron/close-stale` for a scheduler. Closed with 503 unless `CRON_SECRET` is set. |
-| Dashboard — action feedback | ✅ | Shared toast provider + row flash. |
-| Per-visit event log | ✅ | `VisitEvent` written in the same transaction as each state change. |
-| Purpose options (admin-managed) | ✅ | `/dashboard/settings/purposes`, ADMIN only. |
-| Visit timeline (expandable rows) | ✅ | Live list + history; fetched per row on expand. |
-| History — table, filters, pagination | ✅ | Search (first, last or full name), host (including deactivated), date range, hide-deliveries. Shows time on site and who checked out. 25 rows/page. |
-| History — visitor frequency chart | ✅ | 30 days fetched; week view sliced client-side. |
-| Appointments — staff management | ✅ | `/dashboard/appointments`: create (same path as public booking: QR + email), list, cancel (→ `CANCELLED`). Any future time, not limited to the public slots. |
-| Hosts — directory management | ✅ | Admin-only at `/dashboard/hosts`. Add, rename, move department, deactivate. **No delete.** Inactive hosts are refused by every public write path. |
-| Staff account management | ✅ | Admin-only at `/dashboard/staff`: create, promote/demote, remove. |
-| Change your own password | ✅ | `/dashboard/account`, any signed-in user. Revokes other sessions; rate limited 5/min. |
-| Login + session | ✅ | Better Auth email + password. Sign-up disabled; accounts come from the seed or `/dashboard/staff`. |
-| Role enforcement (ADMIN / GUARD) | ✅ | Server-side checks behind a real session. `role` is `input: false`. |
-| Rate limiting | ✅ | Sign-in 5/min; walk-in check-in and appointment redeem 20/min; appointment lookup 30/min; booking-code emails 3 per email per 15 min (DB-backed). The first four are in-memory, per process. |
-| Check-out attribution | ✅ | `Visit.checkedOutById` + `checkedOutByName`; both null means the cleanup closed it. |
-| Empty + loading states | ✅ | `EmptyState` / `TableSkeleton`, route-level `loading.tsx`. |
-| Dark / light theme | ✅ | `ThemeToggle`; inline script prevents the flash on load. The kiosk stays light. |
-| Host notification | ❌ **blocked** | Nothing notifies a host; the kiosk copy says reception will. |
-| Password reset (forgotten) | ❌ **blocked** | Better Auth's reset endpoints need a mail sender wired into auth. |
-| Group appointments | ❌ | No model, route or UI. |
-| Appointment reschedule | ❌ | Cancel exists (staff); rescheduling does not. |
-| Time-slot conflict prevention | ❌ | Two visitors can book the same host at the same slot. |
-| Visitor identity across visits | 🟡 | `VisitorProfile` (email + name) links bookings; per-visit `Visitor` rows are still not joined to it. |
-| Automated test suite | ✅ | `npm test` — `node --test` + tsx against a separate `vms_test` database. Updated for the merged model; see `git-merge.md`. |
-| README | ✅ | Setup, test logins, scripts, routes, quirks. |
-
----
-
-## Data model
-
-Models: `User`, `Host`, `Visitor`, `Visit`, `VisitEvent`, `Appointment`,
-`PurposeOption`, `VisitorProfile`, `VisitorVerification`, plus Better Auth's
-`Session` / `Account` / `Verification` — all live. A staff member's password is
-a scrypt hash on their `Account` row (`providerId: "credential"`, `accountId` =
-their own user id; sign-in matches on both). `User` carries no credential column
-as of migration `20260921093731_drop_user_password`.
-
-`User` has two named relations to `Visit`: `VisitCheckedInBy` (guard-assisted
-check-in) and `VisitCheckedOutBy` (who closed the visit).
-
-### Purpose options
-
-`Visitor.purposeId` and `Appointment.purposeId` are nullable references to
-`PurposeOption`, replacing what used to be a free-text `purpose` string on each.
-`src/lib/purposes.ts` owns every read and write.
-
-**Invariant:** options are retired with `isActive = false`, never deleted. A
-visit recorded last year has to keep reading the way it was recorded, so both
-foreign keys are `onDelete: Restrict` — a hard delete is refused by the database
-(P2003), not merely discouraged by the UI. `isActive` is filtered in exactly one
-place, `getActivePurposeOptions()`, which is what the dropdowns use; every
-display path joins the label regardless of status.
-
-Deliveries collect no purpose and are not gaining a field for one, but
-`createDeliveryLog()` links them to the "Delivery" option by label so the Purpose
-column keeps reading as it always did. Null if that option was renamed away.
-
-⚠️ **This table is global.** See [`MULTI_TENANCY_TODO.md`](./MULTI_TENANCY_TODO.md).
-
-### Appointment credentials
-
-An appointment carries two codes, and either checks the visitor in:
-
-| Code | Shape | For |
-| --- | --- | --- |
-| `qrToken` | `crypto.randomUUID()` | What the QR encodes and a scanner reads |
-| `referenceNumber` | `APT-` + 6 unambiguous chars | Typed at a keypad when the QR will not scan |
-
-The QR encodes the **token**, never the row's `id` — a code gets photographed
-and printed, and a primary key that leaks that way invites guessing at
-neighbours. Reference numbers are random rather than sequential for the same
-reason; the seeded `APT-100x` fixtures are the exception.
-
-`AppointmentStatus` replaces the old `used` boolean: PENDING → CHECKED_IN on
-arrival, with CANCELLED and EXPIRED as dead ends a kiosk can word properly.
-Nothing sweeps lapsed appointments into EXPIRED — `expiresAt` is what turns them
-away, and the status is there for an explicit sweep later.
-
-**Invariant:** every surface decides eligibility through
-`validateAppointmentToken()` in `src/lib/qr.ts`, which accepts either code. The
-redemption in `src/lib/appointments.ts` re-checks inside its transaction through
-the same `classifyAppointment()` rule, so the kiosk's answer and the database's
-answer cannot drift.
-
-`Visit.checkedInBy` is the guard who checked someone in; null means the visitor
-did it themselves at the kiosk. The client declares which surface it is rather
-than the server stamping whoever holds a session, so a guard who wanders onto
-the kiosk page does not silently sign for a self-service arrival.
-
-### Visit lifecycle
-
-One `Visit` row moves through these states — a step-out does **not** create a
-second row, which is why a round trip shows up in history as a single visit.
-
-```
-                   step-out                    return
-   ┌──────────┐ ──────────────▶ ┌────────────────┐ ──────────────▶ ┌──────────┐
-   │  ACTIVE  │                 │ PENDING_RETURN │                 │  ACTIVE  │
-   └────┬─────┘ ◀────────────── └───────┬────────┘                 └────┬─────┘
-        │                                │                              │
-        │            checkout            │  checkout / stale cleanup    │
-        └────────────────┬───────────────┴──────────────────────────────┘
-                         ▼
-                   ┌──────────────┐
-                   │ CHECKED_OUT  │   terminal
-                   └──────────────┘
-```
-
-| Status | `checkInTime` | `exitTime` | `checkOutTime` | In live list? |
-| --- | --- | --- | --- | --- |
-| `ACTIVE` | set | null | null | yes |
-| `PENDING_RETURN` | set | set | null | yes, badged "Out — Returning" |
-| `CHECKED_OUT` | set | may persist | set | no |
-
-**Invariant:** `status` is the authority on whether a visit is open, *not*
-`checkOutTime IS NULL` — two different open states share a null check-out.
-
-A delivery skips the diagram entirely: `createDeliveryLog()` writes it straight
-to `CHECKED_OUT` with `checkOutTime === checkInTime`, so it is a single completed
-event rather than a session anyone has to remember to close. `Visitor` carries
-two nullable columns only deliveries use — `recipientDepartment` (a typed-in
-destination when the recipient is not one of the hosts) and `note`.
-
-### Visit events
-
-Every arrow in the diagram above also appends a `VisitEvent` — `CHECK_IN`,
-`STEP_OUT`, `RETURN`, `CHECK_OUT` — written **in the same transaction** as the
-state change it describes. `applyVisitTransition()` in `src/lib/visits.ts` holds
-that invariant for the three transitions; creation does it with a nested write.
-
-**Invariant:** an event exists if and only if its state change committed. A
-transition that loses a concurrency race matches zero rows, so it writes no
-event — verified with four simultaneous check-outs producing one 200, three 409s
-and exactly one `CHECK_OUT`.
-
-`status` says where a visit ended up; the events say how it got there. That
-matters most for a round trip: `markVisitReturned()` clears `exitTime`, so the
-row forgets the step-out, but `STEP_OUT` and `RETURN` remain on the timeline.
-
-A delivery has two events at one instant, which is the correct reading of a
-drop-off and needs no special case in the UI. Migration
-`20260916011019_add_visit_event_log` backfills every pre-existing visit from its
-own `checkInTime` / `exitTime` / `checkOutTime`, so no row expands to nothing —
-except that a historical round trip is unrecoverable, since `exitTime` had
-already been cleared on return.
-
-### Current dev database contents
-
-What `npm run db:seed` creates: 3 hosts · 5 purpose options · 6 appointments
-covering every status (`APT-1001`–`APT-1003` PENDING, `APT-1004` CHECKED_IN,
-`APT-1005` CANCELLED, `APT-1006` lapsed) · 2 staff logins (1 `ADMIN`, 1
-`GUARD`). Re-seeding pushes the fixtures' `scheduledFor` forward and re-hashes
-the fixture passwords. Visit and event counts drift with testing; `prisma
-studio` is the authority.
-
----
-
-## Routes
-
-### Pages
-
-| Path | Auth | Purpose |
-| --- | --- | --- |
-| `/` | public | Landing |
-| `/login` | public | Dev credential login |
-| `/appointment-booking` | public | Book a visit; emails a QR code |
-| `/check-in` | public | Check-in method chooser |
-| `/check-in/walkin` · `/check-in/appointment` | public | The two check-in flows |
-| `/dashboard` | session | Live check-ins |
-| `/dashboard/scan` | session | Guard-side QR scanning |
-| `/dashboard/settings/purposes` | **ADMIN** | Manage the purpose dropdown |
-| `/dashboard/account` | session | Change your own password |
-| `/dashboard/appointments` | session | Pre-register visitors; list and cancel |
-| `/dashboard/history` | session | Visit history + frequency chart |
-| `/dashboard/hosts` | **ADMIN** | Host directory (redirects a guard to `/dashboard`) |
-| `/dashboard/staff` | **ADMIN** | Staff logins (redirects a guard to `/dashboard`) |
-
-### API
-
-| Method + path | Auth | Purpose |
-| --- | --- | --- |
-| `GET /api/visits` | session | Open visits (`ACTIVE` + `PENDING_RETURN`) |
-| `POST /api/visits` | **public** | Kiosk walk-in check-in |
-| `POST /api/deliveries` | session | Log a courier drop-off (born `CHECKED_OUT`) |
-| `POST /api/visits/[id]/checkout` | session | End a visit → `CHECKED_OUT` |
-| `POST /api/visits/[id]/step-out` | session | → `PENDING_RETURN`, stamps `exitTime` |
-| `POST /api/visits/[id]/return` | session | → `ACTIVE`, clears `exitTime` |
-| `GET /api/visits/[id]/events` | session | One visit's timeline, oldest first |
-| `GET /api/visits/close-stale` | session | Count what the cleanup would close |
-| `POST /api/visits/close-stale` | **ADMIN** | Run the cleanup |
-| `POST /api/appointments` | **public** | Book a visit, then email the QR code |
-| `POST /api/appointments/validate` | **public** | Resolve a scanned token or typed reference |
-| `POST /api/appointments/check-in` | **public**¹ | Redeem either code |
-| `POST /api/appointments/manage` | session | Staff pre-registration (QR + email, no consent recorded) |
-| `DELETE /api/appointments/manage/[reference]` | session | Cancel a PENDING appointment (409 otherwise) |
-| `POST /api/booking/lookup` | **public** | Email a code for an email + name pair (generic response) |
-| `POST /api/booking/verify` | **public** | Check the code; sets the verified cookie |
-| `POST /api/purposes` | **ADMIN** | Add a purpose option |
-| `PATCH /api/purposes/[id]` | **ADMIN** | Rename, retire or restore one |
-| `POST /api/purposes/[id]/move` | **ADMIN** | Shift one up or down |
-
-¹ `POST /api/appointments/check-in` requires a session only when the body sets
-`assisted: true`, which is what stamps `Visit.checkedInBy`. The token is sent in
-the body rather than the URL: a `qrToken` is a bearer credential, and URLs are
-the part of a request that reliably reaches access logs and referrer headers.
-
-| `POST /api/hosts` | **ADMIN** | Add a host |
-| `PATCH /api/hosts/[id]` | **ADMIN** | Rename, move department, activate / deactivate |
-| `POST /api/staff` | **ADMIN** | Create a dashboard login |
-| `PATCH /api/staff/[id]` | **ADMIN** | Promote / demote |
-| `DELETE /api/staff/[id]` | **ADMIN** | Remove a login (sessions + credential cascade) |
-| `POST /api/account/password` | session | Change your own password |
-| `GET·POST /api/auth/[...all]` | **public** | Better Auth: `/sign-in/email`, `/sign-out`, `/get-session`, `/update-user`, … |
-
-The public kiosk endpoints, walk-in check-in and `/sign-in/email` are rate limited. Note
-that the catch-all is exactly that: every endpoint Better Auth is configured to
-expose is reachable there, which is why sign-up is disabled and `role` is not a
-writable field.
-
-Every state-changing visit endpoint states its precondition in the `updateMany`
-WHERE clause, so a repeat or concurrent call returns **409** rather than
-overwriting a timestamp. Unknown id returns **404**.
-
----
-
-## Running it
-
-The dev database is a **separate Postgres cluster on port 5433**, created for
-this repo so the PostgreSQL service on 5432 is never touched. It is not a
-Windows service, so it has to be started by hand after a reboot:
-
-```bash
-# start / stop the dev cluster
-"/c/Program Files/PostgreSQL/18/bin/pg_ctl" -D "C:/Users/josep/pgdata/vms-dev" \
-  -l "C:/Users/josep/pgdata/vms-dev/server.log" start
-"/c/Program Files/PostgreSQL/18/bin/pg_ctl" -D "C:/Users/josep/pgdata/vms-dev" stop
-```
-
-```bash
-bun install               # or npm install — postinstall runs `prisma generate`
-npx prisma migrate dev    # apply migrations
-npm run db:seed           # hosts, purposes, appointments, staff logins
-npm run dev               # http://localhost:3000
-```
-
-`npx prisma migrate reset` drops, re-migrates and re-seeds in one go — the
-fastest way back to a known state while testing.
-
-`.env` needs `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL` and
-`BOOKING_VERIFY_SECRET` (see `.env.example`). The app will not start without the
-auth secret. Add `RESEND_API_KEY` + `APPOINTMENT_FROM_EMAIL` if emails should
-actually send; without them a booking still succeeds and the send is logged.
-
-### Test logins
-
-Seeded by `npm run db:seed`, printed by it on every run, defined in
-`prisma/seed.ts`. The seed is the **only** way an account is created — sign-up
-is disabled — and re-running it re-hashes the fixture passwords, which doubles
-as the password-reset path.
-
-| Role | Email | Password | Notes |
-| --- | --- | --- | --- |
-| `ADMIN` | `admin@geoplan.ph` | `admin123` | Sees and can run **Close all stale visits** |
-| `GUARD` | `guard@geoplan.ph` | `guard123` | Same dashboard without the cleanup button; `POST /api/visits/close-stale` returns 403 |
-
-| Script | Does |
-| --- | --- |
-| `npm run dev` / `build` / `start` / `lint` | standard Next.js |
-| `npm run db:migrate` | `prisma migrate dev` |
-| `npm run db:seed` | `tsx prisma/seed.ts` (seed cmd lives in `prisma7.config.ts`) |
-| `npm run db:studio` | `prisma studio` |
-
----
-
-## Known gaps and risks
-
-1. ~~Deleting a `Host` row would delete visit history.~~ **Fixed 2026-09-22.**
-   `Visitor.hostId` and `Appointment.hostId` are now `onDelete: Restrict`, so
-   the database refuses the delete instead of cascading it away. Two tests hold
-   the line. Hosts are still retired with `active: false`.
-2. **Seeded reference numbers are still sequential.** `APT-1001`–`APT-1004` are
-   fixtures, kept fixed so they can be documented and typed from memory.
-   Appointments created through the dashboard are random. If the seed fixtures
-   ever ship anywhere real, they are an enumeration foothold.
-3. **Rate limiting is in-memory and per process.** Fine for one node; behind a
-   load balancer the counters stop being shared, and `x-forwarded-for` is
-   trusted as given. It is a brake on automation, not an access control.
-4. **Tests cover the libraries, not the HTTP layer.** 54 tests exercise the
-   visit lifecycle, appointments, staff and the cleanup directly against the
-   database. The role gates and status codes on the routes above them are still
-   only checked by hand with `curl` — that is the next layer to automate.
-5. **Kiosk endpoints are deliberately public.** `POST /api/visits` and the
-   appointment routes are unauthenticated because the kiosk is an unattended
-   terminal. They are rate limited per process; they are still open.
-   `POST /api/deliveries` is *not* in this group — it requires a session.
-6. **`PurposeOption.label` is case-sensitively unique.** "Meeting" and
-   "meeting" can both exist, giving the dropdown two entries that read the same.
-   Fixing it properly needs a functional unique index on `lower(label)`, which
-   Prisma cannot express in the schema — it would have to be raw SQL in a
-   migration with no model-level representation.
-7. **Everything is single-tenant.** Tracked in
-   [`MULTI_TENANCY_TODO.md`](./MULTI_TENANCY_TODO.md); add to it whenever you
-   build something without tenant scoping.
-8. **Stale cleanup has a door but no scheduler.** `POST /api/cron/close-stale`
-   exists and is token-authenticated; nothing calls it yet.
-9. **`/appointment-booking` itself is public and unthrottled.** The code-email
-   step is limited per email, but booking is not. Anyone who can reach it can
-   create appointments and cause confirmation emails to be sent.
-10. Seeded credentials are written down in `prisma/seed.ts`. They are hashed in
-   the database, but `admin123` / `guard123` are fixtures and must be changed
-   before this is deployed anywhere. The seeded appointments carry fixed
-   `qrToken` uuids for the same reason.
-11. **No password *reset*, only password *change*.** See the feature table.
-12. **Camera access needs a secure context.** `getUserMedia` is unavailable over
-   plain HTTP except on `localhost`, so the scanner will silently fall back to
-   "no camera" on a LAN address until the app is served over HTTPS. The manual
-   reference-number path still works there.
-13. **Deliveries logged by the retired kiosk flow are still ordinary open-ended
-   visits.** Nothing backfilled them, so an old one left `ACTIVE` still shows in
-   the live list until the stale cleanup closes it. The live table keeps its
-   host-less "Reception" fallback for exactly those rows.
-14. **The kiosk name fields use `autocomplete="given-name"`/`"family-name"`**,
-    as the name-split work required. Clark's kiosk form used `autocomplete="off"`
-    so a shared tablet never suggests the previous visitor's name. Decide which
-    wins for the kiosk; see `git-merge.md`.
-
----
-
-## Gotchas for the next session
-
-Things that cost time once and shouldn't cost it twice:
-
-- **`auth.api.*` called directly skips Better Auth's rate limiter.** The limiter
-  is an `onRequest` hook in the HTTP pipeline, so a server action that calls
-  `auth.api.signInEmail` never reaches it. That is why the login action carries
-  its own limit from `src/lib/rate-limit.ts` — without it, the form would have
-  been the unmetered way past the metered endpoint next to it.
-- **A Better Auth option is a public route.** `/api/auth/[...all]` mounts
-  everything the config exposes. Enabling something in `src/lib/auth.ts`
-  publishes its endpoint with no other edit; check what it adds first.
-- **The credential is on `account`, not `user`.** Sign-in looks for a row with
-  `providerId: "credential"` **and** `accountId` equal to the user's own id. Get
-  either wrong and a correct password reads as "invalid email or password".
-- **`prisma migrate diff` renamed its flags in Prisma 7** — it is `--from-schema`
-  / `--to-schema`, not `--from-schema-datamodel`. Diffing two schema files needs
-  no database, which is how the drop-password migration was written while
-  Postgres was unreachable.
-- **`npx tsc` doesn't work** — it resolves to a stub package that prints "This is
-  not the tsc command you are looking for". Use `./node_modules/.bin/tsc --noEmit`.
-- **After adding or renaming an API route, run `npx next typegen`.** This Next.js
-  version type-checks `RouteContext<"/api/...">` against a generated route
-  manifest, so new routes fail `tsc` until the manifest is regenerated.
-- **`prisma migrate dev` did not regenerate the client** in this project — run
-  `npx prisma generate` explicitly after a schema change, or new fields won't
-  exist on the typed client. **A `next dev` already running keeps the old client
-  in memory**, so restart it too, or every query touching the new model fails
-  with `Unknown argument` / `Unknown field`.
-- **`next dev` refuses a second instance in the same directory**, so a stray
-  server from an earlier session blocks a fresh one. Either restart that server
-  or test against `next start -p <other port>` after a build.
-- **A `.mts` scratch script in the project root breaks `next build`** —
-  `tsconfig.json` includes `**/*.mts`, so it gets type-checked. Delete it before
-  building, or keep it outside the project.
-- **`P1000: Authentication failed`** on a `prisma` command, or a 500 from
-  `/check-in/walkin`, means `DATABASE_URL` is wrong or Postgres is down.
-  `/check-in` still renders, which makes the failure easy to misread as a
-  routing problem.
-- **`react-hooks/set-state-in-effect` is on and it is an error, not a warning.**
-  A hook that starts timers must do its setup without a synchronous `setState`
-  in the effect body — see `src/app/check-in/use-idle-timeout.ts`.
-- **Adding a column with a default needs a backfill plan.** A plain
-  `ADD COLUMN ... DEFAULT` applies that default to *every* existing row. Use
-  `prisma migrate dev --create-only`, add the `UPDATE`, then apply.
-- **`server-only` blocks running `src/lib/*` outside Next.js.** To drive those
-  modules from a script, run tsx with `--conditions=react-server`, which resolves
-  the package to its no-op build.
-- **Never compute "now" in a client component's render path.** It runs on the
-  server and again at hydration, and the two answers differ across a minute
-  boundary. Either compute it in the server component and pass it down, or
-  read it after mount — see `useCurrentMinute()` in
-  `src/app/appointment-booking/date-time-picker.tsx` (`useSyncExternalStore`
-  with a null server snapshot).
-- **`prisma migrate dev` refuses data-loss migrations non-interactively**
-  (dropping a column, say), which is how agents and CI run it. Generate the SQL
-  with `npx prisma migrate diff --from-config-datasource --to-schema
-  prisma/schema.prisma --script`, save it as a new migration folder (add any
-  verification block in front), then `npx prisma migrate deploy`.
-- **`timestamp` columns are UTC but zone-less.** Raw SQL `now()` and node-pg
-  both apply the DB session / process zone (Manila here), so ad-hoc queries are
-  off by 8 hours. Use `now() at time zone 'UTC'` and select `col::text`.
-- **`toISOString().slice(0, 16)` is not a `datetime-local` value.** It is UTC,
-  while the input and the booking API both work in local time; east of Greenwich
-  it silently backdates the field. Use `toDateTimeLocalValue()` in
-  `src/lib/dates.ts`.
-- **On Windows, Node resolves `/tmp` to `C:\tmp`** (which doesn't exist). Use a
-  real temp path for scratch files.
-- **`dotenv.config()` prints a banner to stdout** — pass `{ quiet: true }` when
-  capturing a script's output into a shell variable.
-- The `AGENTS.md` agent-instructions block is rewritten by `next dev`; committing
-  it alongside your work keeps the tree clean.
+See [CONTINUATION.md](./CONTINUATION.md) for the full deferred list and
+verification items.
