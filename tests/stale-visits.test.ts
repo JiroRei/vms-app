@@ -1,140 +1,104 @@
-/**
- * Closing visits nobody checked out.
- *
- * The rule that matters is which timestamp a stale visit is closed at. Using
- * "now" would make a Monday visit read as a three-day stay because nobody ran
- * the cleanup until Thursday, so a visit left open collapses onto the end of
- * the day it began — and one that stepped out keeps its real `exitTime`,
- * because that is an actual observation of someone leaving.
- */
+/** Auto-close timestamps are observations or site closing time, never sweep time. */
 import assert from "node:assert/strict";
 import { after, beforeEach, describe, test } from "node:test";
 
-import { endOfLocalDay, startOfLocalDay } from "@/lib/dates";
+import { addDaysToKey, zonedTimeToUtc } from "@/lib/booking-config";
 import { prisma } from "@/lib/prisma";
+import { AUTO_CLOSE_TIME } from "@/lib/site-config";
 import { closeStaleVisits, countStaleVisits } from "@/lib/stale-visits";
-import { markVisitReturning } from "@/lib/visits";
-
 import { makeHost, makeVisit, readVisit, resetDatabase } from "./helpers";
 
 beforeEach(resetDatabase);
-after(async () => {
-  await prisma.$disconnect();
-});
+after(async () => { await resetDatabase(); await prisma.$disconnect(); });
 
-/** Noon two days ago — unambiguously "a day that is over". */
-function daysAgo(days: number): Date {
-  const date = new Date();
-  date.setDate(date.getDate() - days);
-  date.setHours(12, 0, 0, 0);
-  return date;
-}
+const today = "2026-10-12";
+const now = zonedTimeToUtc(today, "12:00");
+const daysAgo = (days: number, time = "12:00") => zonedTimeToUtc(addDaysToKey(today, -days), time);
+const closingTime = (days: number) => new Date(zonedTimeToUtc(addDaysToKey(today, -days), AUTO_CLOSE_TIME).getTime() + 59_999);
 
 describe("what counts as stale", () => {
   test("today's open visits are left alone", async () => {
     const host = await makeHost();
-    await makeVisit(host.id, { checkInTime: new Date() });
-
-    assert.equal(await countStaleVisits(), 0);
-    assert.equal((await closeStaleVisits()).closed, 0);
+    await makeVisit(host.id, { checkInTime: now });
+    assert.equal(await countStaleVisits(now), 0);
+    assert.equal((await closeStaleVisits(now)).closed, 0);
   });
 
-  test("an already closed visit is not reopened or recounted", async () => {
+  test("a previously checked-out visit keeps its real departure", async () => {
     const host = await makeHost();
     const { visit } = await makeVisit(host.id, { checkInTime: daysAgo(2) });
-
-    const closedAt = new Date("2026-01-01T00:00:00.000Z");
-    await prisma.visit.update({
-      where: { id: visit.id },
-      data: { status: "CHECKED_OUT", checkOutTime: closedAt },
-    });
-
-    assert.equal(await countStaleVisits(), 0);
-    assert.deepEqual((await readVisit(visit.id)).checkOutTime, closedAt);
+    const closedAt = daysAgo(2, "13:00");
+    await prisma.visit.update({ where: { id: visit.id }, data: { status: "CHECKED_OUT", checkOutTime: closedAt } });
+    assert.equal(await countStaleVisits(now), 0);
+    assert.equal((await closeStaleVisits(now)).closed, 0);
+    const row = await readVisit(visit.id);
+    assert.deepEqual(row.checkOutTime, closedAt);
+    assert.equal(row.closedAutomatically, false);
   });
 
-  test("the count and the cleanup always agree", async () => {
+  test("the count and cleanup agree and repeated sweeps do not duplicate events", async () => {
     const host = await makeHost();
     await makeVisit(host.id, { checkInTime: daysAgo(3) });
     await makeVisit(host.id, { checkInTime: daysAgo(1) });
-    await makeVisit(host.id, { checkInTime: new Date() });
-
-    const predicted = await countStaleVisits();
-    const { closed } = await closeStaleVisits();
-
-    assert.equal(predicted, 2);
-    assert.equal(
-      closed,
-      predicted,
-      "the dialog promises this number before the button is pressed",
-    );
+    await makeVisit(host.id, { checkInTime: now });
+    const count = await countStaleVisits(now);
+    assert.equal(count, 2);
+    assert.equal((await closeStaleVisits(now)).closed, count);
+    assert.equal((await closeStaleVisits(now)).closed, 0);
+    assert.equal(await prisma.visitEvent.count({ where: { eventType: "AUTO_CLOSE" } }), 2);
   });
 });
 
 describe("what it closes them at", () => {
-  test("an abandoned visit closes at the end of the day it began", async () => {
-    const host = await makeHost();
-    const checkInTime = daysAgo(2);
-    const { visit } = await makeVisit(host.id, { checkInTime });
-
-    await closeStaleVisits();
-    const closed = await readVisit(visit.id);
-
-    assert.equal(closed.status, "CHECKED_OUT");
-    assert.deepEqual(
-      closed.checkOutTime,
-      endOfLocalDay(checkInTime),
-      "not 'now' — that would turn an old visit into a multi-day stay",
-    );
-  });
-
-  test("a stepped-out visit closes at the moment it was seen leaving", async () => {
+  test("an abandoned visit closes at the site's configured minute end and is unattributed", async () => {
     const host = await makeHost();
     const { visit } = await makeVisit(host.id, { checkInTime: daysAgo(2) });
-
-    await markVisitReturning(visit.id);
-    // Drag the exit back into the same past day the check-in sits in.
-    const exitTime = daysAgo(2);
-    exitTime.setHours(16, 45, 0, 0);
-    await prisma.visit.update({ where: { id: visit.id }, data: { exitTime } });
-
-    await closeStaleVisits();
+    await closeStaleVisits(now);
     const closed = await readVisit(visit.id);
-
-    assert.deepEqual(
-      closed.checkOutTime,
-      exitTime,
-      "a real observation beats a synthetic end-of-day stamp",
-    );
+    assert.equal(closed.status, "CHECKED_OUT");
+    assert.deepEqual(closed.checkOutTime, closingTime(2));
+    assert.equal(closed.closedAutomatically, true);
+    assert.equal(closed.checkedOutById, null);
+    assert.equal(closed.checkedOutByName, null);
+    assert.deepEqual((await prisma.visitEvent.findFirstOrThrow({ where: { visitId: visit.id, eventType: "AUTO_CLOSE" } })).timestamp, closingTime(2));
   });
 
-  test("visits from different days each keep their own day's end", async () => {
+  test("a pending-return visit keeps the time it was observed leaving", async () => {
     const host = await makeHost();
-    const older = daysAgo(3);
-    const newer = daysAgo(1);
+    const { visit } = await makeVisit(host.id, { checkInTime: daysAgo(2) });
+    const exitTime = daysAgo(2, "16:45");
+    await prisma.visit.update({ where: { id: visit.id }, data: { status: "PENDING_RETURN", exitTime } });
+    await closeStaleVisits(now);
+    const closed = await readVisit(visit.id);
+    assert.deepEqual(closed.checkOutTime, exitTime);
+    assert.equal(closed.closedAutomatically, true);
+  });
 
-    const { visit: a } = await makeVisit(host.id, { checkInTime: older });
-    const { visit: b } = await makeVisit(host.id, { checkInTime: newer });
-
-    await closeStaleVisits();
-
-    assert.deepEqual((await readVisit(a.id)).checkOutTime, endOfLocalDay(older));
-    assert.deepEqual((await readVisit(b.id)).checkOutTime, endOfLocalDay(newer));
+  test("visits from different days each keep their own closing time", async () => {
+    const host = await makeHost();
+    const { visit: older } = await makeVisit(host.id, { checkInTime: daysAgo(3) });
+    const { visit: newer } = await makeVisit(host.id, { checkInTime: daysAgo(1) });
+    await closeStaleVisits(now);
+    assert.deepEqual((await readVisit(older.id)).checkOutTime, closingTime(3));
+    assert.deepEqual((await readVisit(newer.id)).checkOutTime, closingTime(1));
   });
 });
 
 describe("day boundaries", () => {
-  test("start of day is midnight local and end is the last millisecond", () => {
-    const start = startOfLocalDay(new Date("2026-05-20T13:22:11.500Z"));
-    assert.equal(start.getHours(), 0);
-    assert.equal(start.getMinutes(), 0);
-    assert.equal(start.getSeconds(), 0);
-    assert.equal(start.getMilliseconds(), 0);
+  test("23:50 yesterday closes while 00:10 today stays open in the site timezone", async () => {
+    const host = await makeHost();
+    const { visit: before } = await makeVisit(host.id, { checkInTime: daysAgo(1, "23:50") });
+    const { visit: after } = await makeVisit(host.id, { checkInTime: daysAgo(0, "00:10") });
+    assert.equal(await countStaleVisits(now), 1);
+    await closeStaleVisits(now);
+    assert.equal((await readVisit(before.id)).status, "CHECKED_OUT");
+    assert.equal((await readVisit(after.id)).status, "ACTIVE");
+  });
 
-    const end = endOfLocalDay(new Date("2026-05-20T13:22:11.500Z"));
-    assert.equal(end.getHours(), 23);
-    assert.equal(end.getMinutes(), 59);
-    assert.equal(end.getSeconds(), 59);
-    assert.equal(end.getMilliseconds(), 999);
+  test("the last minute is not swept until the next site day", async () => {
+    const host = await makeHost();
+    await makeVisit(host.id, { checkInTime: daysAgo(1, "23:50") });
+    assert.equal(await countStaleVisits(daysAgo(1, "23:59")), 0);
+    assert.equal(await countStaleVisits(daysAgo(0, "00:00")), 1);
   });
 });

@@ -8,13 +8,19 @@
  * suite uses, so the two can never disagree about which database is which.
  */
 import { spawnSync } from "node:child_process";
+import { resolve } from "node:path";
 
 import "./setup";
 
-const result = spawnSync("npx", ["prisma", "migrate", "deploy"], {
+const result = spawnSync(process.execPath, [
+  resolve("node_modules/prisma/build/index.js"),
+  "migrate", "deploy", "--config", "prisma7.config.ts",
+], {
   stdio: "inherit",
-  shell: true,
+  cwd: process.cwd(),
   env: process.env,
 });
+
+if (result.error) console.error(result.error.message);
 
 process.exit(result.status ?? 1);

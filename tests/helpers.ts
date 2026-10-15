@@ -7,6 +7,10 @@
  * before it.
  */
 import { prisma } from "@/lib/prisma";
+import { randomUUID } from "node:crypto";
+import type { AppointmentStatus } from "@/generated/prisma/enums";
+import { appointmentExpiry } from "@/lib/qr";
+import { assertTestDatabase } from "./test-database";
 
 /**
  * Empties every table.
@@ -17,13 +21,32 @@ import { prisma } from "@/lib/prisma";
  * deliberate schema decision.
  */
 export async function resetDatabase(): Promise<void> {
+  assertTestDatabase();
+  await prisma.emailOutbox.deleteMany();
+  await prisma.kioskDevice.deleteMany();
+  await prisma.rateLimitBucket.deleteMany();
+  await prisma.exportLog.deleteMany();
+  await prisma.appointmentEvent.deleteMany();
+  await prisma.visitEvent.deleteMany();
   await prisma.visit.deleteMany();
   await prisma.visitor.deleteMany();
   await prisma.appointment.deleteMany();
+  await prisma.visitorPass.deleteMany();
+  await prisma.visitorProfile.deleteMany();
+  await prisma.visitorVerification.deleteMany();
+  await prisma.purposeOption.deleteMany();
   await prisma.host.deleteMany();
   await prisma.session.deleteMany();
   await prisma.account.deleteMany();
   await prisma.user.deleteMany();
+  await prisma.verification.deleteMany();
+}
+
+export async function makePurpose(label = "Testing") {
+  const existing = await prisma.purposeOption.findFirst({
+    where: { label: { equals: label, mode: "insensitive" } },
+  });
+  return existing ?? prisma.purposeOption.create({ data: { label } });
 }
 
 export async function makeHost(
@@ -43,10 +66,13 @@ export async function makeVisit(
   hostId: string | null,
   overrides: Partial<{ name: string; checkInTime: Date }> = {},
 ) {
+  const [firstName, ...lastName] = (overrides.name ?? "Test Visitor").split(" ");
+  const purpose = await makePurpose();
   const visitor = await prisma.visitor.create({
     data: {
-      name: overrides.name ?? "Test Visitor",
-      purpose: "Testing",
+      firstName,
+      lastName: lastName.join(" "),
+      purposeId: purpose.id,
       hostId,
       visits: {
         create: overrides.checkInTime
@@ -62,15 +88,30 @@ export async function makeVisit(
 
 export async function makeAppointment(
   hostId: string,
-  overrides: Partial<{ referenceNumber: string; used: boolean }> = {},
+  overrides: Partial<{
+    referenceNumber: string;
+    status: AppointmentStatus;
+    scheduledFor: Date;
+    expiresAt: Date;
+    firstName: string;
+    lastName: string;
+    visitorEmail: string;
+  }> = {},
 ) {
+  const purpose = await makePurpose();
+  const scheduledFor = overrides.scheduledFor ?? new Date();
   return prisma.appointment.create({
     data: {
       referenceNumber: overrides.referenceNumber ?? "APT-TEST01",
-      visitorName: "Appointment Visitor",
-      purpose: "Scheduled testing",
+      qrToken: randomUUID(),
+      firstName: overrides.firstName ?? "Appointment",
+      lastName: overrides.lastName ?? "Visitor",
+      visitorEmail: overrides.visitorEmail ?? "appointment@example.invalid",
+      purposeId: purpose.id,
       hostId,
-      used: overrides.used ?? false,
+      scheduledFor,
+      expiresAt: overrides.expiresAt ?? appointmentExpiry(scheduledFor),
+      status: overrides.status ?? "PENDING",
     },
   });
 }

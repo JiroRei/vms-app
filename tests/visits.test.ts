@@ -14,7 +14,7 @@ import { after, beforeEach, describe, test } from "node:test";
 import { prisma } from "@/lib/prisma";
 import {
   checkOutVisit,
-  createDeliveryVisit,
+  createDeliveryLog,
   createWalkInVisit,
   getActiveVisits,
   getHosts,
@@ -22,20 +22,23 @@ import {
   markVisitReturning,
 } from "@/lib/visits";
 
-import { makeHost, makeVisit, readVisit, resetDatabase } from "./helpers";
+import { makeAppointment, makeHost, makePurpose, makeVisit, readVisit, resetDatabase } from "./helpers";
 
 beforeEach(resetDatabase);
 after(async () => {
+  await resetDatabase();
   await prisma.$disconnect();
 });
 
 describe("check-in", () => {
   test("a walk-in creates a visitor and one open visit", async () => {
     const host = await makeHost();
+    const purpose = await makePurpose("Vendor review");
 
     const { visitId } = await createWalkInVisit({
-      name: "Marcus Delgado",
-      purpose: "Vendor review",
+      firstName: "Marcus",
+      lastName: "Delgado",
+      purposeId: purpose.id,
       hostId: host.id,
     });
 
@@ -47,19 +50,30 @@ describe("check-in", () => {
   });
 
   test("a delivery is logged without a host", async () => {
-    const { visitorId } = await createDeliveryVisit({
+    const user = await prisma.user.create({ data: { name: "Delivery guard", email: "delivery@example.invalid" } });
+    await makePurpose("Delivery");
+    const { visitorId, visitId } = await createDeliveryLog({
       name: "Courier Co.",
       hostId: null,
+      loggedBy: user,
+      recipientDepartment: "Receiving",
+      note: null,
     });
 
     const visitor = await prisma.visitor.findUniqueOrThrow({
       where: { id: visitorId },
+      include: { purpose: true },
     });
 
     assert.equal(visitor.type, "DELIVERY");
     assert.equal(visitor.hostId, null);
     // The tables render this label, so it is part of the contract.
-    assert.equal(visitor.purpose, "Delivery");
+    assert.equal(visitor.purpose?.label, "Delivery");
+    const visit = await readVisit(visitId);
+    assert.equal(visit.status, "CHECKED_OUT");
+    assert.deepEqual(visit.checkInTime, visit.checkOutTime);
+    assert.equal(visit.checkedInBy, user.id);
+    assert.equal(visit.checkedOutByName, user.name);
   });
 });
 
@@ -315,14 +329,7 @@ describe("host deletion is refused, not cascaded", () => {
 
   test("a host with an appointment cannot be deleted either", async () => {
     const host = await makeHost();
-    await prisma.appointment.create({
-      data: {
-        referenceNumber: "APT-GUARD1",
-        visitorName: "Expected",
-        purpose: "x",
-        hostId: host.id,
-      },
-    });
+    await makeAppointment(host.id, { referenceNumber: "APT-GUARD1" });
 
     await assert.rejects(() => prisma.host.delete({ where: { id: host.id } }));
   });

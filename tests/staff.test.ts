@@ -25,6 +25,7 @@ import { resetDatabase } from "./helpers";
 
 beforeEach(resetDatabase);
 after(async () => {
+  await resetDatabase();
   await prisma.$disconnect();
 });
 
